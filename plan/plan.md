@@ -43,26 +43,26 @@ until agentkit is go-gettable).
 
 ## Active work
 
-### ◐ Slice 0 — the `source.Source` plugin contract (FOR REVIEW)
-- `source/source.go`: `SessionRef`, `State` (+ `Status`, `Decision`),
-  `Event` (+ `EventKind`), and the capability split — `Source` (List/State/
-  Observe/Post) + optional `Spawner` (Spawn) + optional `Actor` (Act).
-- **Decision surfaced to user:** does this contract shape fit all three
-  backends? Especially: is `Act(Action{Name,Args})` the right generic for
-  autowork's apply-decision / confirm-send, or should those be typed methods?
-- **next:** on sign-off, create+push public `IodeSystems/yscr`, then P1.
+### ✅ Slice 0 — the `source.Source` plugin contract
+- `source/source.go`: `SessionRef`, `State` (+ `Status`), `Event` (+
+  `EventKind`), the capability split — `Source` (List/State/Observe/Post) +
+  optional `Spawner` + optional `Actor` (generic `Act(Action{Name,Args})`,
+  ratified) — and the **`Questionnaire`/`Field`/`Option`/`Answer`** crux
+  (form↔conversation, schema-validated). Repo pushed (public).
 
-### ◻ P1 — autowork3 grows the source API (additive, no behavior change)
-The seam the autowork plugin consumes. Most of this reaches into internals
-today (see the footprint inventory) and needs public endpoints:
-- **fleet observe:** threads + per-thread task counts + open decisions
-  (today: direct `repo.CountTasksByThreadStatus`, `store.ListOpenDecisionRequests`).
-- **event feed:** an outbound subscription severing the `publishEvent →
-  notifyYSCR` in-process hook (api.go:311) — the tightest coupling.
-- **spawn:** create a thread + author an issue via API (today: `spawnYSCR`
-  direct `repo.CreateThread`/`CreateSession`).
-- **act:** post-message, apply-decision, confirm-send endpoints. `ConfirmSend`
-  already exists; keep the send-gate/confused-deputy gating IN autowork3.
+### ◐ P1 — autowork3 grows the source API (additive, no behavior change)
+- ✅ **P1.1 fleet observe** — `GET /api/fleet` (`fleetState` builder shared
+  with the `fleet_status` tool). autowork3 `87b8bd3`.
+- ✅ **P1.3 decisions-as-questionnaires** — `GET /api/fleet/decisions`
+  (`buildDecisionQuestionnaire`: each item → a choice Field). Answer path =
+  existing `SubmitDecision`. `bcc5dd9`.
+- ✅ **P1.2 event feed** — `GET /api/fleet/stream` (fleet SSE topic +
+  `broadcastFleetEvent`, same notable-type gate as `notifyYSCR`, additive
+  alongside it). `bee6840`.
+- ◻ **P1.4 spawn + act** — spawn endpoint (create thread + author issue; today
+  `spawnYSCR` direct `repo.CreateThread`/`CreateSession`) + post-message
+  endpoint. apply-decision (`SubmitDecision`) + confirm-send (`ConfirmSend`)
+  already exist; keep the send-gate/confused-deputy gating IN autowork3.
 - auth: reuse client-token bearer (already general).
 
 ### ◻ P2 — yscr service
