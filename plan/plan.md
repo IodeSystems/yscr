@@ -59,15 +59,23 @@ until agentkit is go-gettable).
 - ✅ **P1.2 event feed** — `GET /api/fleet/stream` (fleet SSE topic +
   `broadcastFleetEvent`, same notable-type gate as `notifyYSCR`, additive
   alongside it). `bee6840`.
-- ◻ **P1.4 spawn + act** — spawn endpoint (create thread + author issue; today
-  `spawnYSCR` direct `repo.CreateThread`/`CreateSession`) + post-message
-  endpoint. apply-decision (`SubmitDecision`) + confirm-send (`ConfirmSend`)
-  already exist; keep the send-gate/confused-deputy gating IN autowork3.
-- auth: reuse client-token bearer (already general).
+- ✅ **P1.4 spawn + act — NO new autowork3 code needed.** Spawn = existing
+  `POST /api/threads` + `POST /api/threads/{id}/messages`; Post = the messages
+  endpoint; Act = existing `SubmitDecision` + `ConfirmSend`. The whole P1 seam
+  is public. Send-gate/confused-deputy gating stays in autowork3.
+- auth: client-token bearer (already general).
 
-### ◻ P2 — yscr service
-- plugin framework + **autowork plugin** (consumes P1) first; then claude-code
-  + openai plugins.
+**P1 COMPLETE** — the autowork-side source seam is fully public (fleet + fleet/
+decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing).
+
+### ◐ P2 — yscr service
+- ✅ **autowork plugin** (`plugins/autowork`) — HTTP client implementing
+  `source.Source` + `source.Spawner` against the P1 endpoints (List/State/
+  Observe(SSE)/Post/Spawn); decision_requests → `Questionnaire`. httptest-
+  backed tests green. Validates the source contract against a real backend.
+- ◻ **autowork plugin: `Actor`** — Act("apply_decision") → SubmitDecision,
+  Act("confirm_send") → ConfirmSend.
+- ◻ **claude-code + openai plugins** (tmux; corrallm/OpenRouter).
 - concierge on agentkit; port the digest (`runFleetStatus`) + narration
   (distill L1 / utterance L2 materiality gate / durable summary) from
   autowork3's `yscr.go`/`yscr_status.go`.
