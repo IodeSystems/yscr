@@ -120,9 +120,19 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   (in-app toast + live fleet refresh) AND a web-push `Notify` to the phone.
   `material()` rules unit-tested; SSE stream verified live. Baseline primed on
   start so a restart doesn't re-announce in-flight work.
-- ◻ **service remaining** — audio proxy (oidio↔corrallm) for voice; durable
-  store (subscriptions + concierge convo); auth for non-loopback; a
-  concierge→push hook (narration utterances → Notify).
+- ✅ **voice (audio proxy + PWA mic/TTS)** — `service/audio.go`: forward-only
+  `/api/audio/{capabilities,transcriptions,speech}` relay (mirrors autowork3 —
+  fixed upstream suffix, key added outbound only, hop-by-hop + inbound-Auth
+  stripped, 25 MiB upload cap, no-redirect SSRF guard) → `config.Audio`
+  (defaults to the LLM/corrallm endpoint; parakeet STT / kokoro TTS) +
+  `/api/audio/config` for the UI. PWA: hold-to-talk mic (getUserMedia +
+  MediaRecorder → `/api/audio/transcriptions` → send) + a 🔊 speak toggle that
+  plays `/api/audio/speech` on each reply; controls hidden if audio disabled.
+  Wiring verified (config + proxy forward); end-to-end blocked only by corrallm
+  being DOWN (192.168.1.76:8111 refused) — works once it's up.
+- ◻ **service remaining** — durable store (subscriptions + concierge convo);
+  auth for the credentialed audio relay on non-loopback; concierge→push hook
+  (narration utterances → Notify).
 - ✅ **Deploy (dev proxy via hz):** `hz service create --name ysr --domain
   ysr.iodesystems.com --backend 192.168.1.76:8600 --internal-only
   --internal-dns-ip 192.168.1.160 --health-check /api/health` (mirrors the

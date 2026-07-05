@@ -26,6 +26,7 @@ async function send(message) {
     });
     const { reply } = await r.json();
     pending.textContent = reply || "(no reply)";
+    if (speakOn && reply) speak(reply);
   } catch (e) {
     pending.className = "msg err";
     pending.textContent = "error: " + e.message;
@@ -102,6 +103,90 @@ async function enablePush() {
   btn.title = "Notifications enabled";
 }
 
+// ── voice: mic (STT) + speak (TTS) ──────────────────────────────────
+
+let audioCfg = { stt_model: "", tts_model: "", tts_voice: "" };
+let speakOn = false;
+let recorder = null;
+let chunks = [];
+
+async function loadAudioConfig() {
+  try {
+    audioCfg = await api("/api/audio/config").then((r) => r.json());
+    $("#mic").style.display = "";
+    $("#speak").style.display = "";
+  } catch (_) {
+    // audio disabled server-side → hide the controls
+    $("#mic").style.display = "none";
+    $("#speak").style.display = "none";
+  }
+}
+
+async function startRecording() {
+  if (recorder) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (_) {
+    return;
+  }
+  chunks = [];
+  recorder = new MediaRecorder(stream);
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    recorder = null;
+    await transcribeAndSend(blob);
+  };
+  $("#mic").classList.add("on");
+  recorder.start();
+}
+
+function stopRecording() {
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+  $("#mic").classList.remove("on");
+}
+
+async function transcribeAndSend(blob) {
+  const fd = new FormData();
+  fd.append("file", blob, "speech.webm");
+  if (audioCfg.stt_model) fd.append("model", audioCfg.stt_model);
+  try {
+    const r = await api("/api/audio/transcriptions", { method: "POST", body: fd });
+    const data = await r.json();
+    const text = (data.text || "").trim();
+    if (text) send(text);
+  } catch (e) {
+    bubble("transcription failed: " + e.message, "err");
+  }
+}
+
+async function speak(text) {
+  try {
+    const r = await api("/api/audio/speech", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: text, model: audioCfg.tts_model, voice: audioCfg.tts_voice || undefined }),
+    });
+    const buf = await r.blob();
+    const audio = new Audio(URL.createObjectURL(buf));
+    audio.play().catch(() => {});
+  } catch (_) {}
+}
+
+// Hold-to-talk (pointer) — press to record, release to transcribe + send.
+const mic = $("#mic");
+mic.addEventListener("pointerdown", (e) => { e.preventDefault(); startRecording(); });
+mic.addEventListener("pointerup", (e) => { e.preventDefault(); stopRecording(); });
+mic.addEventListener("pointerleave", stopRecording);
+mic.addEventListener("pointercancel", stopRecording);
+
+$("#speak").addEventListener("click", () => {
+  speakOn = !speakOn;
+  $("#speak").classList.toggle("on", speakOn);
+});
+
 // ── boot ────────────────────────────────────────────────────────────
 
 if ("serviceWorker" in navigator) {
@@ -145,6 +230,7 @@ function connectStream() {
 }
 
 loadFleet();
+loadAudioConfig();
 if (!connectStream()) {
   setInterval(loadFleet, 15000); // fallback poll where SSE is unavailable
 }

@@ -27,6 +27,10 @@ type Config struct {
 	// ClaudeCode enables the tmux Claude Code source.
 	ClaudeCode ClaudeCodeConfig `json:"claude_code"`
 
+	// Audio is the STT/TTS backend (corrallm/oidio); defaults to the LLM
+	// endpoint. Empty BaseURL disables the /api/audio/* proxy.
+	Audio AudioConfig `json:"audio"`
+
 	// VAPID holds the web-push keypair (auto-generated on first run if empty).
 	VAPID VAPIDConfig `json:"vapid"`
 
@@ -49,6 +53,14 @@ type AutoworkConfig struct {
 type ClaudeCodeConfig struct {
 	Enabled bool     `json:"enabled"`
 	Command []string `json:"command"` // default ["claude"]
+}
+
+type AudioConfig struct {
+	BaseURL  string `json:"base_url"`  // corrallm/oidio; default = LLM.BaseURL
+	APIKey   string `json:"api_key"`   // default = LLM.APIKey; env YSCR_AUDIO_KEY
+	STTModel string `json:"stt_model"` // transcription model (e.g. parakeet)
+	TTSModel string `json:"tts_model"` // speech model (e.g. kokoro)
+	TTSVoice string `json:"tts_voice"` // voice id (backend default if empty)
 }
 
 type VAPIDConfig struct {
@@ -92,9 +104,28 @@ func Load(path string) (*Config, error) {
 	if c.VAPID.Subject == "" {
 		c.VAPID.Subject = "mailto:yscr@localhost"
 	}
+	// Audio defaults to the LLM endpoint (corrallm serves both).
+	if c.Audio.BaseURL == "" {
+		c.Audio.BaseURL = c.LLM.BaseURL
+	}
+	if c.Audio.APIKey == "" {
+		c.Audio.APIKey = c.LLM.APIKey
+	}
+	if c.Audio.STTModel == "" {
+		c.Audio.STTModel = "parakeet"
+	}
+	if c.Audio.TTSModel == "" {
+		c.Audio.TTSModel = "kokoro"
+	}
 	// Secret env overrides.
 	if v := os.Getenv("YSCR_LLM_KEY"); v != "" {
 		c.LLM.APIKey = v
+		if c.Audio.APIKey == "" {
+			c.Audio.APIKey = v
+		}
+	}
+	if v := os.Getenv("YSCR_AUDIO_KEY"); v != "" {
+		c.Audio.APIKey = v
 	}
 	if v := os.Getenv("YSCR_AUTOWORK_TOKEN"); v != "" {
 		c.Autowork.Token = v
