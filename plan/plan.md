@@ -123,9 +123,22 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
 - ◻ **service remaining** — audio proxy (oidio↔corrallm) for voice; durable
   store (subscriptions + concierge convo); auth for non-loopback; a
   concierge→push hook (narration utterances → Notify).
-- **Deploy:** TLS via hz at `ysr.iodesystems.com` (VPN-internal) reverse-
-  proxying to the dev box (NOT deployed to 160). Service stays plain-HTTP
-  behind the proxy — the secure context push needs comes from hz's cert.
+- ✅ **Deploy (dev proxy via hz):** `hz service create --name ysr --domain
+  ysr.iodesystems.com --backend 192.168.1.76:8600 --internal-only
+  --internal-dns-ip 192.168.1.160 --health-check /api/health` (mirrors the
+  existing internal `ebb` service). Internal DNS resolves ysr → 192.168.1.160
+  (HAProxy) → dev-box backend. `proxyUp: true`; PWA + all `/api/*` verified
+  serving over the HAProxy TLS path. yscr runs on the dev box (`~/.local/bin/
+  yscr -listen 0.0.0.0:8600`, currently a nohup bg process — needs a systemd
+  unit for persistence).
+- ❓ **Cert gap (blocks PWA/push in a browser):** HAProxy presents a FALLBACK
+  cert (`dev.veliode.com`) for `ysr.iodesystems.com` — the existing internal
+  `ebb.iodesystems.com` has the same fallback, so `*.iodesystems.com` isn't
+  loaded in HAProxy. A browser rejects the name mismatch → no secure context →
+  no installable PWA / push. Needs a wildcard `*.iodesystems.com` cert
+  provisioned at the ZONE level (hz `config.json` zones on .160; the hz CLI has
+  no zone/cert command). Not a per-service fix. → resolve before the PWA is
+  usable on a phone.
 - ◻ **narration** — port distill L1 / utterance L2 materiality-gate / durable
   summary from autowork3's `yscr_status.go` for the voice progress channel.
 
