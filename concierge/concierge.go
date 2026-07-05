@@ -105,6 +105,12 @@ var conciergeTools = []llm.ToolDef{
 		"title":  strProp("a short title for the work"),
 		"prompt": strProp("what the work should do — the first instruction"),
 	}, "source", "prompt")),
+	toolDef("answer_questionnaire", "Submit the user's answers to a questionnaire awaiting them (a decision). Gather the answers CONVERSATIONALLY first, then submit them here as {field_key: value}. A choice value must be one of that field's listed options.", objSchema(map[string]any{
+		"source":           strProp("the source id"),
+		"id":               strProp("the session id"),
+		"questionnaire_id": strProp("the questionnaire id from pull_detail"),
+		"answers":          map[string]any{"type": "object", "description": "map of field_key → the user's chosen value"},
+	}, "source", "id", "questionnaire_id", "answers")),
 }
 
 func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, error) {
@@ -144,6 +150,8 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 			return fmt.Sprintf("spawn failed: %v", err), nil
 		}
 		return fmt.Sprintf("started %s/%s (%s).", ref.Source, ref.ID, ref.Title), nil
+	case "answer_questionnaire":
+		return c.answerQuestionnaire(ctx, str("source"), str("id"), str("questionnaire_id"), args["answers"]), nil
 	default:
 		return fmt.Sprintf("unknown tool %q.", tc.Function.Name), nil
 	}
@@ -212,4 +220,50 @@ func (c *Concierge) pullDetail(ctx context.Context, sourceID, id string) string 
 		}
 	}
 	return b.String()
+}
+
+// answerQuestionnaire is the form↔conversation submit: re-fetch the live
+// questionnaire, validate the assembled answers against it (returning a fix
+// instruction on failure so the model re-asks the user — the fix loop), then
+// hand the validated Answer to the source's Actor.
+func (c *Concierge) answerQuestionnaire(ctx context.Context, sourceID, id, qid string, rawAnswers any) string {
+	src, ok := c.sources[sourceID]
+	if !ok {
+		return unknownSource(sourceID)
+	}
+	actor, ok := src.(source.Actor)
+	if !ok {
+		return fmt.Sprintf("source %q cannot accept answers.", sourceID)
+	}
+	answers, _ := rawAnswers.(map[string]any)
+	if answers == nil {
+		return "answers must be an object of {field_key: value}."
+	}
+
+	st, err := src.State(ctx, id)
+	if err != nil {
+		return fmt.Sprintf("could not read %s/%s: %v", sourceID, id, err)
+	}
+	var q *source.Questionnaire
+	for i := range st.Pending {
+		if st.Pending[i].ID == qid {
+			q = &st.Pending[i]
+			break
+		}
+	}
+	if q == nil {
+		return fmt.Sprintf("no questionnaire %q is awaiting on %s/%s (it may already be resolved).", qid, sourceID, id)
+	}
+	if err := source.Validate(*q, answers); err != nil {
+		return fmt.Sprintf("answers not ready: %v. Ask the user for the missing/invalid answers, then resubmit.", err)
+	}
+
+	res, err := actor.Act(ctx, id, source.Action{
+		Name: "answer_questionnaire",
+		Args: map[string]any{"questionnaire_id": qid, "answers": answers},
+	})
+	if err != nil {
+		return fmt.Sprintf("submit failed: %v", err)
+	}
+	return res
 }

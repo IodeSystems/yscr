@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/iodesystems/yscr/source"
@@ -72,6 +73,45 @@ func TestState(t *testing.T) {
 	f := st.Pending[0].Fields[0]
 	if f.Type != source.FieldChoice || f.Key != "item-a" || len(f.Options) != 1 {
 		t.Errorf("field mapping wrong: %+v", f)
+	}
+}
+
+func TestActApplyDecision(t *testing.T) {
+	var got map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/threads/t1/decisions/req-1/submit", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(map[string]any{"applied": 1, "escalated": 0, "dismissed": 1})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	res, err := New(srv.URL, "", nil).Act(context.Background(), "t1", source.Action{
+		Name: "answer_questionnaire",
+		Args: map[string]any{
+			"questionnaire_id": "req-1",
+			"answers":          map[string]any{"item-a": "apply", "item-b": "dismiss"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res, "1 applied") || !strings.Contains(res, "1 dismissed") {
+		t.Errorf("result = %q", res)
+	}
+	// item_ids grouped by action into decisions[].
+	decs, _ := got["decisions"].([]any)
+	if len(decs) != 2 {
+		t.Fatalf("decisions = %d; want 2 (apply, dismiss)", len(decs))
+	}
+	byAction := map[string]string{}
+	for _, d := range decs {
+		m := d.(map[string]any)
+		ids := m["item_ids"].([]any)
+		byAction[m["action"].(string)] = ids[0].(string)
+	}
+	if byAction["apply"] != "item-a" || byAction["dismiss"] != "item-b" {
+		t.Errorf("grouping wrong: %v", byAction)
 	}
 }
 

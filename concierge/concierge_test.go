@@ -11,9 +11,11 @@ import (
 	"github.com/iodesystems/yscr/store"
 )
 
-// fakeSource is a canned source.Source for the tool-loop test.
+// fakeSource is a canned source.Source (+ Actor) for the tool-loop tests.
 type fakeSource struct {
-	listed int
+	listed  int
+	pending []source.Questionnaire
+	acted   *source.Action
 }
 
 func (f *fakeSource) ID() string { return "fake" }
@@ -26,10 +28,15 @@ func (f *fakeSource) State(_ context.Context, id string) (source.State, error) {
 		Ref:     source.SessionRef{Source: "fake", ID: id, Title: "Ship it"},
 		Status:  source.StatusRunning,
 		Summary: "1 active task",
+		Pending: f.pending,
 	}, nil
 }
 func (f *fakeSource) Observe(context.Context, string) (<-chan source.Event, error) { return nil, nil }
 func (f *fakeSource) Post(context.Context, string, string) error                   { return nil }
+func (f *fakeSource) Act(_ context.Context, _ string, a source.Action) (string, error) {
+	f.acted = &a
+	return "done.", nil
+}
 
 // scriptRunner replays canned chat turns.
 type scriptRunner struct {
@@ -79,5 +86,31 @@ func TestConverse_DrivesSource(t *testing.T) {
 	}
 	if fs.listed == 0 {
 		t.Error("fleet_status did not drive the source's List")
+	}
+}
+
+// TestAnswerQuestionnaire — the form↔conversation loop: invalid answers get a
+// fix instruction (not submitted); valid answers reach the source's Actor.
+func TestAnswerQuestionnaire(t *testing.T) {
+	fs := &fakeSource{pending: []source.Questionnaire{{
+		ID: "req-1", Title: "Triage",
+		Fields: []source.Field{{Key: "a", Type: source.FieldChoice, Required: true,
+			Options: []source.Option{{Value: "apply"}, {Value: "dismiss"}}}},
+	}}}
+	c := New(&scriptRunner{}, store.NewMem(), fs)
+
+	// Invalid: bad choice value → fix instruction, no Act.
+	res := c.answerQuestionnaire(context.Background(), "fake", "s1", "req-1", map[string]any{"a": "nope"})
+	if !strings.Contains(res, "not ready") || fs.acted != nil {
+		t.Fatalf("invalid answer should not submit: res=%q acted=%v", res, fs.acted)
+	}
+
+	// Valid → reaches the Actor with the right args.
+	res = c.answerQuestionnaire(context.Background(), "fake", "s1", "req-1", map[string]any{"a": "apply"})
+	if res != "done." || fs.acted == nil {
+		t.Fatalf("valid answer not submitted: res=%q acted=%v", res, fs.acted)
+	}
+	if fs.acted.Name != "answer_questionnaire" || fs.acted.Args["questionnaire_id"] != "req-1" {
+		t.Errorf("act args wrong: %+v", fs.acted)
 	}
 }

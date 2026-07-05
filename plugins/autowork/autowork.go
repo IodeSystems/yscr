@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/iodesystems/yscr/source"
@@ -23,11 +24,11 @@ import (
 
 const sourceID = "autowork"
 
-// The plugin is a full Source and can spawn work. (Actor — apply-decision /
-// confirm-send — lands next.)
+// The plugin is a full Source, can spawn work, and mediates actions.
 var (
 	_ source.Source  = (*Client)(nil)
 	_ source.Spawner = (*Client)(nil)
+	_ source.Actor   = (*Client)(nil)
 )
 
 // Client is an autowork3 source plugin.
@@ -221,6 +222,93 @@ func (c *Client) Spawn(ctx context.Context, spec source.SpawnSpec) (source.Sessi
 		}
 	}
 	return source.SessionRef{Source: sourceID, ID: created.ID, Title: created.Name}, nil
+}
+
+// ── source.Actor ────────────────────────────────────────────────────
+
+// Act mediates a backend action. autowork keeps the actual send-gate /
+// confused-deputy gating behind these endpoints — the plugin only translates.
+func (c *Client) Act(ctx context.Context, id string, action source.Action) (string, error) {
+	switch action.Name {
+	case "answer_questionnaire", "apply_decision":
+		return c.applyDecision(ctx, id, action.Args)
+	case "confirm_send":
+		return c.confirmSend(ctx, id, action.Args)
+	default:
+		return "", fmt.Errorf("autowork: unknown action %q", action.Name)
+	}
+}
+
+// applyDecision translates a questionnaire Answer (item_id → action verb) into
+// autowork3's SubmitDecision payload (item_ids grouped by action) and POSTs it.
+func (c *Client) applyDecision(ctx context.Context, threadID string, args map[string]any) (string, error) {
+	reqID, _ := args["questionnaire_id"].(string)
+	if reqID == "" {
+		reqID, _ = args["request_id"].(string)
+	}
+	if reqID == "" {
+		return "", fmt.Errorf("autowork: apply_decision needs questionnaire_id")
+	}
+	note, _ := args["note"].(string)
+	answers, _ := args["answers"].(map[string]any)
+
+	byAction := map[string][]string{}
+	for itemID, verb := range answers {
+		v, _ := verb.(string)
+		if v == "" {
+			continue
+		}
+		byAction[v] = append(byAction[v], itemID)
+	}
+	if len(byAction) == 0 {
+		return "", fmt.Errorf("autowork: no answers to submit")
+	}
+	verbs := make([]string, 0, len(byAction))
+	for v := range byAction {
+		verbs = append(verbs, v)
+	}
+	sort.Strings(verbs) // deterministic decisions[] order
+	var decisions []map[string]any
+	for _, verb := range verbs {
+		ids := byAction[verb]
+		sort.Strings(ids)
+		d := map[string]any{"item_ids": ids, "action": verb}
+		if note != "" {
+			d["note"] = note
+		}
+		decisions = append(decisions, d)
+	}
+
+	var out struct {
+		Applied   int `json:"applied"`
+		Escalated int `json:"escalated"`
+		Dismissed int `json:"dismissed"`
+	}
+	if err := c.postJSON(ctx, "/api/threads/"+threadID+"/decisions/"+reqID+"/submit", map[string]any{"decisions": decisions}, &out); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("submitted: %d applied, %d escalated, %d dismissed.", out.Applied, out.Escalated, out.Dismissed), nil
+}
+
+// confirmSend executes a staged send via autowork3's human-confirm endpoint
+// (the send-gate validates the pending). The concierge does the read-back
+// first; this only fires on a genuine confirmation.
+func (c *Client) confirmSend(ctx context.Context, threadID string, args map[string]any) (string, error) {
+	pendingID, _ := args["pending_id"].(string)
+	if pendingID == "" {
+		return "", fmt.Errorf("autowork: confirm_send needs pending_id")
+	}
+	var out struct {
+		Sent    bool   `json:"sent"`
+		Message string `json:"message"`
+	}
+	if err := c.postJSON(ctx, "/api/threads/"+threadID+"/send-pending/"+pendingID+"/confirm", map[string]any{}, &out); err != nil {
+		return "", err
+	}
+	if out.Sent {
+		return "sent.", nil
+	}
+	return "not sent: " + out.Message, nil
 }
 
 // ── HTTP helpers ────────────────────────────────────────────────────

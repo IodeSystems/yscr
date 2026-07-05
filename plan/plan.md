@@ -79,9 +79,14 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   `agent.LLMRunner` = `llm.NewClient` → corrallm/OpenRouter/claude-code-tmux);
   own conversation store (`store.Mem`); `DefaultSystem` persona. `Converse`
   = inject user msg → Turn → reply. Tool-loop test drives a fake source.
-- ◻ **autowork plugin: `Actor`** — Act("apply_decision") → SubmitDecision,
-  Act("confirm_send") → ConfirmSend. + concierge tools: answer_questionnaire
-  (conversational → `Answer` → Act) — the form↔conversation crux.
+- ✅ **autowork `Actor` + `answer_questionnaire` loop — the form↔conversation
+  crux, end to end.** `source.Validate` (required + choice/multi option checks
+  → fix instruction). Concierge `answer_questionnaire` tool: re-fetch the live
+  questionnaire → validate (fix loop: bad/missing answers return an instruction
+  so the model re-asks) → hand the validated `Answer` to `source.Actor`.
+  autowork `Act`: `answer_questionnaire`/`apply_decision` → group item_ids by
+  action verb → `SubmitDecision`; `confirm_send` → `ConfirmSend`. All tested
+  (validate / grouped-payload / concierge fix-loop).
 - ◻ **claude-code + openai plugins** (tmux; corrallm/OpenRouter).
 - ◻ **service wiring** — HTTP/SSE for Android, audio proxy (oidio↔corrallm),
   durable store, config (endpoint/token/sources); port narration (distill/
