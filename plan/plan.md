@@ -93,7 +93,16 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   conversation, Post advances it, State reports the last reply; a different
   shape from autowork (source-that-is-an-agent) → validates the contract
   against a non-remote backend. Tested (Spawn/Post/State/List).
-- ◻ **claude-code plugin** (Claude Code CLI in tmux virt).
+- ✅ **claude-code plugin** (`plugins/claudecode`) — sessions are Claude Code
+  CLI processes in detached tmux windows, driven via `tmux new-session /
+  send-keys -l / capture-pane -p` (Command configurable; exec-seam for tests).
+  Spawn starts + sends the prompt, Post types into the pane, State reads the
+  last pane lines, List prunes dead sessions, Kill tears down. Tested (fake
+  exec) + tmux command forms verified live.
+
+**Three backends now satisfy `source.Source`** — a remote HTTP daemon
+(autowork), in-process agentkit conversations (openai), and tmux-hosted CLIs
+(claude-code) — the strongest validation the contract holds.
 - ◻ **service wiring** — HTTP/SSE for Android, audio proxy (oidio↔corrallm),
   durable store, config (endpoint/token/sources); port narration (distill/
   utterance) later.
