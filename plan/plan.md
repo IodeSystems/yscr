@@ -73,9 +73,19 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   `source.Source` + `source.Spawner` against the P1 endpoints (List/State/
   Observe(SSE)/Post/Spawn); decision_requests → `Questionnaire`. httptest-
   backed tests green. Validates the source contract against a real backend.
+- ✅ **concierge on agentkit** (`concierge/`) — an `agent.Session` with a
+  source-aware toolset (fleet_status / pull_detail / post / spawn) that
+  dispatches into the `source.Source` contract; swappable LLM endpoint (any
+  `agent.LLMRunner` = `llm.NewClient` → corrallm/OpenRouter/claude-code-tmux);
+  own conversation store (`store.Mem`); `DefaultSystem` persona. `Converse`
+  = inject user msg → Turn → reply. Tool-loop test drives a fake source.
 - ◻ **autowork plugin: `Actor`** — Act("apply_decision") → SubmitDecision,
-  Act("confirm_send") → ConfirmSend.
+  Act("confirm_send") → ConfirmSend. + concierge tools: answer_questionnaire
+  (conversational → `Answer` → Act) — the form↔conversation crux.
 - ◻ **claude-code + openai plugins** (tmux; corrallm/OpenRouter).
+- ◻ **service wiring** — HTTP/SSE for Android, audio proxy (oidio↔corrallm),
+  durable store, config (endpoint/token/sources); port narration (distill/
+  utterance) later.
 - concierge on agentkit; port the digest (`runFleetStatus`) + narration
   (distill L1 / utterance L2 materiality gate / durable summary) from
   autowork3's `yscr.go`/`yscr_status.go`.
