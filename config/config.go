@@ -14,6 +14,10 @@ type Config struct {
 	// Listen is the HTTP bind address (default ":8600").
 	Listen string `json:"listen"`
 
+	// Database is the Postgres DSN for durable state (concierge conversation +
+	// push subscriptions). Empty → in-memory (ephemeral). env YSCR_DATABASE_URL.
+	Database string `json:"database"`
+
 	// LLM is the concierge's own endpoint (corrallm / OpenRouter).
 	LLM LLMConfig `json:"llm"`
 
@@ -91,6 +95,12 @@ func Load(path string) (*Config, error) {
 
 	if c.Listen == "" {
 		c.Listen = ":8600"
+	}
+	if c.Database == "" {
+		c.Database = "postgres://yscr:yscr@127.0.0.1:8001/yscr?sslmode=disable"
+	}
+	if v := os.Getenv("YSCR_DATABASE_URL"); v != "" {
+		c.Database = v
 	}
 	if c.LLM.BaseURL == "" {
 		c.LLM.BaseURL = "http://192.168.1.76:8111"

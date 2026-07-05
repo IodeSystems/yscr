@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -32,9 +33,21 @@ type Server struct {
 }
 
 // New builds the service: the concierge on the configured LLM endpoint, the
-// enabled source plugins, and the push hub.
+// enabled source plugins, durable state (Postgres, if configured), and push.
 func New(cfg *config.Config) (*Server, error) {
 	var runner agent.LLMRunner = llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey, cfg.LLM.Model)
+
+	// Durable state: concierge conversation + push subscriptions in Postgres
+	// when a DSN is set; else in-memory (ephemeral).
+	var convStore agent.Store = store.NewMem()
+	var pg *store.PG
+	if cfg.Database != "" {
+		p, err := store.NewPG(context.Background(), cfg.Database)
+		if err != nil {
+			return nil, err
+		}
+		pg, convStore = p, p
+	}
 
 	var sources []source.Source
 	if cfg.Autowork.Enabled {
@@ -47,13 +60,13 @@ func New(cfg *config.Config) (*Server, error) {
 		sources = append(sources, claudecode.New(claudecode.Config{Command: cfg.ClaudeCode.Command}))
 	}
 
-	ph, err := newPushHub(cfg)
+	ph, err := newPushHub(cfg, pg)
 	if err != nil {
 		return nil, err
 	}
 	return &Server{
 		cfg:       cfg,
-		conc:      concierge.New(runner, store.NewMem(), sources...),
+		conc:      concierge.New(runner, convStore, sources...),
 		sources:   sources,
 		push:      ph,
 		sse:       newSSEHub(),

@@ -130,9 +130,26 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   plays `/api/audio/speech` on each reply; controls hidden if audio disabled.
   Wiring verified (config + proxy forward); end-to-end blocked only by corrallm
   being DOWN (192.168.1.76:8111 refused) — works once it's up.
-- ◻ **service remaining** — durable store (subscriptions + concierge convo);
-  auth for the credentialed audio relay on non-loopback; concierge→push hook
-  (narration utterances → Notify).
+- ✅ **Postgres durable store** — isolated `yscr-pg` docker (postgres:18) on
+  the hz-allocated port `127.0.0.1:8001`, user/db/schema `yscr`
+  (search_path=yscr), persistent volume, `--restart unless-stopped`.
+  `store/pg.go` (pgx) is the `agent.Store` (concierge conversation: entries +
+  compaction) AND persists push subscriptions. `config.Database` DSN (default
+  the yscr-pg); nil → in-memory. **Verified: conversation survives a full
+  process restart** (codeword recalled from PG).
+- ✅ **sources active** (was flagged off): `~/.yscr/config.json` enables
+  openai + claude-code (both verified — the concierge spawned real `claude`
+  CLIs in tmux) + autowork (points at 127.0.0.1:8402; live when its daemon is
+  up). Voice integrated + round-tripped (TTS→STT via the proxy).
+- **Known nuance:** agentkit persists tool RESULTS but not the assistant
+  tool-CALL, so replaying a tool-heavy conversation yields orphan `tool`
+  messages that can confuse the model (it claimed "no memory" after a
+  spawn-heavy turn). Plain chat recall is unaffected. → agentkit hardening
+  item (persist the tool_call entry too).
+- ◻ **service remaining** — concierge→push hook (narration → Notify); openai/
+  claude-code session registries are still in-memory (ephemeral across
+  restart — the tmux/convo survive, but the plugin forgets them); systemd unit
+  for yscr; optional auth (LAN-only, deferred per Carl).
 - ✅ **Deploy (dev proxy via hz):** `hz service create --name ysr --domain
   ysr.iodesystems.com --backend 192.168.1.76:8600 --internal-only
   --internal-dns-ip 192.168.1.160 --health-check /api/health` (mirrors the
