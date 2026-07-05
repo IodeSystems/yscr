@@ -131,14 +131,14 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   serving over the HAProxy TLS path. yscr runs on the dev box (`~/.local/bin/
   yscr -listen 0.0.0.0:8600`, currently a nohup bg process — needs a systemd
   unit for persistence).
-- ❓ **Cert gap (blocks PWA/push in a browser):** HAProxy presents a FALLBACK
-  cert (`dev.veliode.com`) for `ysr.iodesystems.com` — the existing internal
-  `ebb.iodesystems.com` has the same fallback, so `*.iodesystems.com` isn't
-  loaded in HAProxy. A browser rejects the name mismatch → no secure context →
-  no installable PWA / push. Needs a wildcard `*.iodesystems.com` cert
-  provisioned at the ZONE level (hz `config.json` zones on .160; the hz CLI has
-  no zone/cert command). Not a per-service fix. → resolve before the PWA is
-  usable on a phone.
+- ◐ **Cert:** hz uses ONE multi-SAN cert per zone (CN=`*.vpn.iodesystems.com`,
+  SANs = each enabled subdomain: code/kc/llm/vz/…). NOT a wildcard — each
+  subdomain is added to the SAN list individually. `hz service create` wires
+  DNS+proxy but does NOT enable SSL for the subdomain; that's a separate
+  per-subdomain SSL toggle (Carl enabled it in the hz UI). hz then re-issues
+  the cert via ACME DNS-01 (async, minutes) + reloads HAProxy. As of last
+  check still serving the veliode fallback → re-issuance in flight; will flip
+  to valid once ACME + HAProxy reload complete.
 - ◻ **narration** — port distill L1 / utterance L2 materiality-gate / durable
   summary from autowork3's `yscr_status.go` for the voice progress channel.
 
