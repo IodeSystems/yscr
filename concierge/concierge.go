@@ -76,7 +76,13 @@ func (c *Concierge) session(sessionID string) *agent.Session {
 // ── tools ───────────────────────────────────────────────────────────
 
 func objSchema(props map[string]any, required ...string) map[string]any {
-	return map[string]any{"type": "object", "properties": props, "required": required}
+	s := map[string]any{"type": "object", "properties": props}
+	// Omit `required` when empty — a null (vs. absent) breaks llama.cpp's
+	// tool-call grammar generation ("type must be array, but is null").
+	if len(required) > 0 {
+		s["required"] = required
+	}
+	return s
 }
 func strProp(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
 

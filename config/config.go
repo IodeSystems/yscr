@@ -96,7 +96,7 @@ func Load(path string) (*Config, error) {
 		c.LLM.BaseURL = "http://192.168.1.76:8111"
 	}
 	if c.LLM.Model == "" {
-		c.LLM.Model = "qwen3-6-27b-mpt"
+		c.LLM.Model = "Qwen3-6-27B-MPT" // corrallm model ids are case-sensitive
 	}
 	if len(c.ClaudeCode.Command) == 0 {
 		c.ClaudeCode.Command = []string{"claude"}
@@ -112,10 +112,10 @@ func Load(path string) (*Config, error) {
 		c.Audio.APIKey = c.LLM.APIKey
 	}
 	if c.Audio.STTModel == "" {
-		c.Audio.STTModel = "parakeet"
+		c.Audio.STTModel = "stt"
 	}
 	if c.Audio.TTSModel == "" {
-		c.Audio.TTSModel = "kokoro"
+		c.Audio.TTSModel = "tts"
 	}
 	// Secret env overrides.
 	if v := os.Getenv("YSCR_LLM_KEY"); v != "" {
