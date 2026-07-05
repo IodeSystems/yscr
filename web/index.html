@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0e14">
+  <title>YSCR</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <h1>YSCR</h1>
+    <div class="actions">
+      <button id="refresh" title="Refresh fleet">⟳</button>
+      <button id="enable-push" title="Enable notifications">🔔</button>
+    </div>
+  </header>
+
+  <section id="fleet" aria-label="Fleet">
+    <div class="empty">Loading fleet…</div>
+  </section>
+
+  <section id="log" aria-label="Conversation"></section>
+
+  <form id="composer">
+    <input id="msg" type="text" autocomplete="off" placeholder="Ask the concierge…" />
+    <button type="submit">Send</button>
+  </form>
+
+  <script src="/app.js"></script>
+</body>
+</html>

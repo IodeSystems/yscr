@@ -103,14 +103,22 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
 **Three backends now satisfy `source.Source`** — a remote HTTP daemon
 (autowork), in-process agentkit conversations (openai), and tmux-hosted CLIs
 (claude-code) — the strongest validation the contract holds.
-- ◻ **service wiring** — HTTP/SSE for Android, audio proxy (oidio↔corrallm),
-  durable store, config (endpoint/token/sources); port narration (distill/
-  utterance) later.
-- concierge on agentkit; port the digest (`runFleetStatus`) + narration
-  (distill L1 / utterance L2 materiality gate / durable summary) from
-  autowork3's `yscr.go`/`yscr_status.go`.
-- own store (concierge conversation + narration summary), own SSE for Android,
-  audio proxy (oidio↔corrallm). Runs ALONGSIDE in-process YSCR.
+- ✅ **service + PWA** (`config/`, `service/`, `web/`, `cmd/yscr`) — the
+  runnable daemon: loads config (~/.yscr/config.json; LLM endpoint, which
+  sources, VAPID), builds the concierge + enabled plugins, serves
+  `POST /api/converse`, `GET /api/fleet` (aggregated `[]source.State`),
+  `/api/health`, and the embedded **installable PWA** (manifest + service
+  worker). **Web Push**: auto-generated VAPID keypair, `GET /api/push/vapid`,
+  `POST /api/push/subscribe`, `Server.Notify(title,body)` fan-out;
+  `sw.js` handles background `push` → `showNotification` + notificationclick
+  focus, and caches the app shell (offline). Verified live: health/fleet/
+  vapid/shell/sw/manifest all serve. **Push needs a secure context (HTTPS or
+  localhost).**
+- ◻ **service remaining** — SSE live feed (`GET /api/stream`) + fire `Notify`
+  from source events; audio proxy (oidio↔corrallm) for voice; durable store
+  (subscriptions + concierge convo); auth for non-loopback.
+- ◻ **narration** — port distill L1 / utterance L2 materiality-gate / durable
+  summary from autowork3's `yscr_status.go` for the voice progress channel.
 
 ### ◻ P3 — cutover
 - delete in-process YSCR from autowork3: `yscr.go`, `yscr_status.go`, the

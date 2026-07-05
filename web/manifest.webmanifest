@@ -1,0 +1,14 @@
+{
+  "name": "YSCR — fleet concierge",
+  "short_name": "YSCR",
+  "description": "Your voice-first fleet concierge across autowork, claude-code, and openai sessions.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0e14",
+  "theme_color": "#0b0e14",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
