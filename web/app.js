@@ -119,5 +119,32 @@ $("#composer").addEventListener("submit", (e) => {
 $("#refresh").addEventListener("click", loadFleet);
 $("#enable-push").addEventListener("click", enablePush);
 
+// ── live feed (SSE) ─────────────────────────────────────────────────
+
+function toast(title, body) {
+  const el = document.createElement("div");
+  el.className = "msg yscr";
+  el.textContent = "🔔 " + title + " — " + body;
+  $("#log").append(el);
+  el.scrollIntoView({ block: "end" });
+}
+
+function connectStream() {
+  if (!("EventSource" in window)) return false;
+  const es = new EventSource("/api/stream");
+  es.addEventListener("fleet", loadFleet);
+  es.addEventListener("notice", (e) => {
+    try {
+      const n = JSON.parse(e.data);
+      toast(n.title, n.body);
+    } catch (_) {}
+    loadFleet();
+  });
+  es.onerror = () => {}; // EventSource auto-reconnects
+  return true;
+}
+
 loadFleet();
-setInterval(loadFleet, 15000);
+if (!connectStream()) {
+  setInterval(loadFleet, 15000); // fallback poll where SSE is unavailable
+}

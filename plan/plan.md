@@ -114,9 +114,18 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   focus, and caches the app shell (offline). Verified live: health/fleet/
   vapid/shell/sw/manifest all serve. **Push needs a secure context (HTTPS or
   localhost).**
-- ◻ **service remaining** — SSE live feed (`GET /api/stream`) + fire `Notify`
-  from source events; audio proxy (oidio↔corrallm) for voice; durable store
-  (subscriptions + concierge convo); auth for non-loopback.
+- ✅ **SSE + Notify-from-events** — `GET /api/stream` (SSE hub) + a fleet
+  watcher (polls every 12s, diffs `source.State`): a material transition (new
+  decision awaiting you / entered blocked / failed) fires an SSE `notice`
+  (in-app toast + live fleet refresh) AND a web-push `Notify` to the phone.
+  `material()` rules unit-tested; SSE stream verified live. Baseline primed on
+  start so a restart doesn't re-announce in-flight work.
+- ◻ **service remaining** — audio proxy (oidio↔corrallm) for voice; durable
+  store (subscriptions + concierge convo); auth for non-loopback; a
+  concierge→push hook (narration utterances → Notify).
+- **Deploy:** TLS via hz at `ysr.iodesystems.com` (VPN-internal) reverse-
+  proxying to the dev box (NOT deployed to 160). Service stays plain-HTTP
+  behind the proxy — the secure context push needs comes from hz's cert.
 - ◻ **narration** — port distill L1 / utterance L2 materiality-gate / durable
   summary from autowork3's `yscr_status.go` for the voice progress channel.
 

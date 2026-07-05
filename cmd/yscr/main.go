@@ -36,6 +36,8 @@ func main() {
 		log.Fatalf("yscr: build service: %v", err)
 	}
 
+	srv.Start() // fleet watcher → SSE + web push
+
 	log.Printf("yscr listening on %s — PWA + concierge (llm=%s, autowork=%v, openai=%v, claude-code=%v)",
 		cfg.Listen, cfg.LLM.BaseURL, cfg.Autowork.Enabled, cfg.OpenAISessions, cfg.ClaudeCode.Enabled)
 	if err := http.ListenAndServe(cfg.Listen, srv.Handler()); err != nil {

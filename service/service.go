@@ -27,6 +27,7 @@ type Server struct {
 	conc      *concierge.Concierge
 	sources   []source.Source
 	push      *pushHub
+	sse       *sseHub
 	sessionID string
 }
 
@@ -55,6 +56,7 @@ func New(cfg *config.Config) (*Server, error) {
 		conc:      concierge.New(runner, store.NewMem(), sources...),
 		sources:   sources,
 		push:      ph,
+		sse:       newSSEHub(),
 		sessionID: "primary",
 	}, nil
 }
@@ -74,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/push/vapid", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"public_key": s.cfg.VAPID.Public})
 	})
+	mux.HandleFunc("GET /api/stream", s.serveStream)
 	mux.HandleFunc("POST /api/push/subscribe", s.handleSubscribe)
 	mux.HandleFunc("POST /api/push/test", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"sent": s.Notify("YSCR", "Test notification — you're subscribed.")})
@@ -99,21 +102,9 @@ func (s *Server) handleConverse(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleFleet aggregates List+State across every source — the non-LLM status
-// channel the PWA polls.
+// channel the PWA polls (and the SSE watcher diffs).
 func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
-	states := []source.State{}
-	for _, src := range s.sources {
-		refs, err := src.List(r.Context())
-		if err != nil {
-			continue // a down source shouldn't sink the rollup
-		}
-		for _, ref := range refs {
-			if st, err := src.State(r.Context(), ref.ID); err == nil {
-				states = append(states, st)
-			}
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": states})
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": s.fleetStates(r.Context())})
 }
 
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
