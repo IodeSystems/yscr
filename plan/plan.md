@@ -87,7 +87,13 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   autowork `Act`: `answer_questionnaire`/`apply_decision` → group item_ids by
   action verb → `SubmitDecision`; `confirm_send` → `ConfirmSend`. All tested
   (validate / grouped-payload / concierge fix-loop).
-- ◻ **claude-code + openai plugins** (tmux; corrallm/OpenRouter).
+- ✅ **openai plugin** (`plugins/openai`) — a source whose sessions ARE
+  agentkit conversations this process drives against corrallm/OpenRouter
+  (`New(llm.NewClient(base,key,model), store, system)`). Spawn starts a
+  conversation, Post advances it, State reports the last reply; a different
+  shape from autowork (source-that-is-an-agent) → validates the contract
+  against a non-remote backend. Tested (Spawn/Post/State/List).
+- ◻ **claude-code plugin** (Claude Code CLI in tmux virt).
 - ◻ **service wiring** — HTTP/SSE for Android, audio proxy (oidio↔corrallm),
   durable store, config (endpoint/token/sources); port narration (distill/
   utterance) later.
