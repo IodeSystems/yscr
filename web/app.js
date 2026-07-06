@@ -50,7 +50,7 @@ async function send(message) {
     pending.className = "msg err";
     pending.textContent = "error: " + e.message;
   } finally {
-    setStatus(null);
+    idleStatus();
   }
   loadFleet();
 }
@@ -128,9 +128,25 @@ async function enablePush() {
 
 let audioCfg = { stt_model: "", tts_model: "", tts_voice: "" };
 let speakOn = false;
-let recorder = null;
-let recordCancelled = false; // release-before-getUserMedia guard
-let chunks = [];
+
+// Hands-free VAD listening state. Toggle the mic on and it listens continuously:
+// each trailing pause auto-finalizes an utterance (transcribe + send) and it
+// keeps listening for the next turn until toggled off.
+let listening = false;       // continuous listen session active
+let micStream = null;        // persistent mic stream for the session
+let audioCtx = null, analyser = null, vadRAF = 0;
+let segRec = null, segChunks = [], segMime = ""; // current utterance recorder
+let finalizeSend = false;    // set right before segRec.stop() to send-or-drop
+let speaking = false;        // TTS playing → suppress capture (echo/self-trigger)
+let hadSpeech = false, speechStart = 0, silenceStart = 0;
+
+// VAD tunables: RMS energy threshold to count as voice, trailing silence (ms)
+// that ends an utterance, and the minimum voiced span to send (drops clicks).
+const VAD = { threshold: 0.018, silenceMs: 900, minSpeechMs: 250 };
+
+// idleStatus restores the resting indicator: "Listening…" while a hands-free
+// session is open, otherwise hidden.
+function idleStatus() { setStatus(listening ? "Listening…" : null, "rec"); }
 
 // One persistent element, unlocked inside a user gesture (iOS Safari requires
 // user-activation to play audio; a later async .play() on an already-unlocked
@@ -159,43 +175,107 @@ function extForMime(mime) {
   return "webm";
 }
 
-async function startRecording() {
-  if (recorder) return;
-  recordCancelled = false;
-  let stream;
+async function startListening() {
+  if (listening) return;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
     console.warn("mic denied", e);
     $("#mic").classList.remove("on");
     return;
   }
-  // Released before the mic opened → don't leave an orphan recorder running.
-  if (recordCancelled) {
-    stream.getTracks().forEach((t) => t.stop());
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) { // no VAD available in this browser → don't half-start
+    micStream.getTracks().forEach((t) => t.stop());
+    micStream = null;
     $("#mic").classList.remove("on");
     return;
   }
-  chunks = [];
-  recorder = new MediaRecorder(stream);
-  const mime = recorder.mimeType;
-  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-  recorder.onstop = async () => {
-    stream.getTracks().forEach((t) => t.stop());
-    const blob = new Blob(chunks, { type: mime || "audio/webm" });
-    recorder = null;
-    if (blob.size) await transcribeAndSend(blob, extForMime(mime));
-    else setStatus(null);
-  };
+  listening = true;
   $("#mic").classList.add("on");
-  setStatus("Recording… tap to stop", "rec");
-  recorder.start();
+  setStatus("Listening…", "rec");
+  audioCtx = new AC();
+  const src = audioCtx.createMediaStreamSource(micStream);
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  src.connect(analyser);
+  hadSpeech = false;
+  silenceStart = 0;
+  startSegment();
+  monitorVAD();
 }
 
-function stopRecording() {
-  recordCancelled = true; // covers release-before-getUserMedia
-  if (recorder && recorder.state !== "inactive") recorder.stop();
+function stopListening() {
+  listening = false;
+  if (vadRAF) { cancelAnimationFrame(vadRAF); vadRAF = 0; }
+  const rec = segRec;
+  segRec = null;
+  if (rec && rec.state !== "inactive") { rec.onstop = null; rec.stop(); } // drop trailing
+  if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+  if (audioCtx) { audioCtx.close().catch(() => {}); audioCtx = null; }
+  analyser = null;
   $("#mic").classList.remove("on");
+  setStatus(null);
+}
+
+// startSegment opens a fresh recorder for the next utterance. Its onstop sends
+// the captured audio (when finalizeSend) and immediately reopens the next
+// segment so listening is continuous.
+function startSegment() {
+  if (!micStream) return;
+  segChunks = [];
+  segRec = new MediaRecorder(micStream);
+  segMime = segRec.mimeType;
+  segRec.ondataavailable = (e) => e.data.size && segChunks.push(e.data);
+  segRec.onstop = () => {
+    const chunks = segChunks, mime = segMime;
+    if (finalizeSend && chunks.length) {
+      const blob = new Blob(chunks, { type: mime || "audio/webm" });
+      if (blob.size) transcribeAndSend(blob, extForMime(mime)); // async; keeps listening
+    }
+    finalizeSend = false;
+    if (listening) startSegment();
+  };
+  segRec.start();
+}
+
+// endUtterance stops the current segment; onstop transcribes+sends (if send) and
+// reopens the next segment.
+function endUtterance(send) {
+  finalizeSend = send;
+  if (segRec && segRec.state !== "inactive") segRec.stop();
+}
+
+// monitorVAD polls RMS energy and endpoints on a trailing pause. Capture during
+// TTS playback is suppressed (speaking) so the concierge's own voice never
+// triggers a turn.
+function monitorVAD() {
+  const buf = new Uint8Array(analyser.fftSize);
+  const tick = () => {
+    if (!listening || !analyser) return;
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+    const rms = Math.sqrt(sum / buf.length);
+    const now = performance.now();
+    const voiced = rms > VAD.threshold && !speaking;
+    if (voiced) {
+      if (!hadSpeech) { hadSpeech = true; speechStart = now; setStatus("Recording…", "rec"); }
+      silenceStart = 0;
+    } else if (hadSpeech) {
+      if (!silenceStart) silenceStart = now;
+      else if (now - silenceStart > VAD.silenceMs) {
+        const spoke = silenceStart - speechStart > VAD.minSpeechMs;
+        hadSpeech = false;
+        silenceStart = 0;
+        if (spoke) setStatus("Transcribing…", "work");
+        else idleStatus();
+        endUtterance(spoke); // onstop sends (if spoke) + reopens the next segment
+      }
+    }
+    vadRAF = requestAnimationFrame(tick);
+  };
+  vadRAF = requestAnimationFrame(tick);
 }
 
 async function transcribeAndSend(blob, ext) {
@@ -208,9 +288,9 @@ async function transcribeAndSend(blob, ext) {
     const data = await r.json();
     const text = (data.text || "").trim();
     if (text) send(text); // send() takes over the status (Thinking…) and clears it
-    else setStatus(null);
+    else idleStatus();
   } catch (e) {
-    setStatus(null);
+    idleStatus();
     bubble("transcription failed: " + e.message, "err");
   }
 }
@@ -224,25 +304,33 @@ async function speak(text) {
     });
     const buf = await r.blob();
     const url = URL.createObjectURL(buf);
-    ttsAudio.onended = () => URL.revokeObjectURL(url);
+    setSpeaking(true); // suppress VAD capture while the reply plays
+    ttsAudio.onended = () => { URL.revokeObjectURL(url); setSpeaking(false); };
+    ttsAudio.onerror = () => setSpeaking(false);
     ttsAudio.src = url;
-    ttsAudio.play().catch((e) => console.warn("tts play failed", e));
+    ttsAudio.play().catch((e) => { console.warn("tts play failed", e); setSpeaking(false); });
   } catch (e) {
     console.warn("tts fetch failed", e);
+    setSpeaking(false);
   }
 }
 
-// Tap to toggle: first tap starts recording, second tap stops + transcribes +
-// sends. `.on` is set synchronously on start so a fast second tap while
-// getUserMedia is still resolving cancels cleanly (recordCancelled guard).
+// setSpeaking gates hands-free capture during TTS: it pauses the live segment
+// recorder so the concierge's own voice isn't recorded/transcribed, and resumes
+// (with a fresh silence window) when playback ends.
+function setSpeaking(v) {
+  speaking = v;
+  if (!segRec) return;
+  if (v && segRec.state === "recording") segRec.pause();
+  if (!v && segRec.state === "paused") { hadSpeech = false; silenceStart = 0; segRec.resume(); idleStatus(); }
+}
+
+// Tap to toggle hands-free listening: tap on and it listens continuously,
+// auto-sending each utterance on a trailing pause (VAD); tap off to stop.
 const mic = $("#mic");
 mic.addEventListener("click", () => {
-  if (mic.classList.contains("on")) {
-    stopRecording();
-  } else {
-    mic.classList.add("on");
-    startRecording();
-  }
+  if (listening) stopListening();
+  else startListening();
 });
 
 $("#speak").addEventListener("click", () => {
