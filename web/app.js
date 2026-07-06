@@ -206,16 +206,18 @@ async function speak(text) {
   }
 }
 
-// Hold-to-talk (pointer) — press to record, release to transcribe + send.
-// setPointerCapture so a drag off the button (desktop) doesn't end the hold.
+// Tap to toggle: first tap starts recording, second tap stops + transcribes +
+// sends. `.on` is set synchronously on start so a fast second tap while
+// getUserMedia is still resolving cancels cleanly (recordCancelled guard).
 const mic = $("#mic");
-mic.addEventListener("pointerdown", (e) => {
-  e.preventDefault();
-  try { mic.setPointerCapture(e.pointerId); } catch (_) {}
-  startRecording();
+mic.addEventListener("click", () => {
+  if (mic.classList.contains("on")) {
+    stopRecording();
+  } else {
+    mic.classList.add("on");
+    startRecording();
+  }
 });
-mic.addEventListener("pointerup", (e) => { e.preventDefault(); stopRecording(); });
-mic.addEventListener("pointercancel", stopRecording);
 
 $("#speak").addEventListener("click", () => {
   speakOn = !speakOn;

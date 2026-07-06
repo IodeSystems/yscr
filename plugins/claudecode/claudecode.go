@@ -55,6 +55,9 @@ type Plugin struct {
 	// exec runs a command and returns combined output. Seam for tests.
 	exec  func(ctx context.Context, name string, args ...string) (string, error)
 	newID func() string
+	// modTime reports a file's mtime in ns (ok=false if it can't be stat'd).
+	// Seam for tests so the liveness window is deterministic.
+	modTime func(path string) (int64, bool)
 
 	mu   sync.Mutex
 	live map[string]liveSess // sid → the tmux window we drive it in
@@ -71,7 +74,14 @@ func New(cfg Config) *Plugin {
 		now:   func() int64 { return time.Now().UnixNano() },
 		exec:  realExec,
 		newID: newUUID,
-		live:  map[string]liveSess{},
+		modTime: func(path string) (int64, bool) {
+			fi, err := os.Stat(path)
+			if err != nil {
+				return 0, false
+			}
+			return fi.ModTime().UnixNano(), true
+		},
+		live: map[string]liveSess{},
 	}
 	if p.tmux == "" {
 		p.tmux = "tmux"
@@ -199,16 +209,28 @@ func (p *Plugin) State(ctx context.Context, sid string) (source.State, error) {
 		return source.State{Ref: ref, Status: source.StatusRunning, Summary: lastLines(pane, 3), UpdatedAt: p.now()}, nil
 	}
 
-	// Dormant: read the transcript tail. Resumable via Post.
+	// Not in our tmux, but the session may be live elsewhere — most often the
+	// interactive CLI the user is typing in. Its transcript JSONL is appended
+	// every turn, so a recent mtime means "active now"; report running rather
+	// than idle. Older → dormant (resumable via Post).
 	if cwd == "" {
 		return source.State{}, fmt.Errorf("claude-code: unknown session %q", sid)
 	}
-	summary := lastAssistantText(p.transcriptPath(cwd, sid))
+	path := p.transcriptPath(cwd, sid)
+	summary := lastAssistantText(path)
 	if summary == "" {
 		summary = "(no transcript)"
 	}
-	return source.State{Ref: ref, Status: source.StatusIdle, Summary: summary, UpdatedAt: p.now()}, nil
+	status := source.StatusIdle
+	if mt, ok := p.modTime(path); ok && p.now()-mt < activeWindowNS {
+		status = source.StatusRunning
+	}
+	return source.State{Ref: ref, Status: status, Summary: summary, UpdatedAt: p.now()}, nil
 }
+
+// activeWindowNS: a transcript touched within this window means the session is
+// live (an interactive CLI turn or a driven pane just wrote to it).
+const activeWindowNS = int64(3 * time.Minute)
 
 func (p *Plugin) Post(ctx context.Context, sid, message string) error {
 	name := p.tmuxName(sid)

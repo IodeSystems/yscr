@@ -67,6 +67,7 @@ func newTest(home string, f *fakeTmux) *Plugin {
 	p.exec = f.run
 	p.now = func() int64 { return 7 }
 	p.newID = func() string { return "new-uuid" }
+	p.modTime = func(string) (int64, bool) { return 0, false } // default: no recent activity → idle
 	return p
 }
 
@@ -133,5 +134,19 @@ func TestState_DormantFromTranscript(t *testing.T) {
 	}
 	if !strings.Contains(st.Summary, "hello from alpha") {
 		t.Errorf("summary from transcript = %q", st.Summary)
+	}
+}
+
+// A transcript written within the liveness window → running (an active CLI
+// session, not driven by us).
+func TestState_RunningFromRecentTranscript(t *testing.T) {
+	p := newTest(fakeHome(t), &fakeTmux{})
+	p.modTime = func(string) (int64, bool) { return p.now(), true } // just touched
+	st, err := p.State(context.Background(), "sess-A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != source.StatusRunning {
+		t.Errorf("status = %q; want running (recent transcript)", st.Status)
 	}
 }
