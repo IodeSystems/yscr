@@ -146,7 +146,7 @@ let hadSpeech = false, speechStart = 0, silenceStart = 0;
 // — a HIGHER threshold + a run of frames of loud input over the TTS to cut it.
 // silenceMs is generous on purpose: people pause between phrases, and cutting a
 // sentence off early is far more annoying than a beat of lag before it sends.
-const VAD = { threshold: 0.014, silenceMs: 2200, minSpeechMs: 250, bargeThreshold: 0.06, bargeFrames: 5 };
+const VAD = { threshold: 0.012, silenceMs: 2600, minSpeechMs: 250, bargeThreshold: 0.06, bargeFrames: 5 };
 let bargeCount = 0; // consecutive loud frames while TTS plays → barge-in
 
 // idleStatus restores the resting indicator: "Listening…" while a hands-free
@@ -430,7 +430,14 @@ $("#speak").addEventListener("click", () => {
 // ── boot ────────────────────────────────────────────────────────────
 
 if ("serviceWorker" in navigator) {
+  // Reload once when a new service worker takes over (a fresh deploy) so an
+  // open PWA runs the new JS instead of the stale build it loaded with. Skip the
+  // first-ever install (no prior controller) so there's no startup reload.
+  const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register("/sw.js").catch(() => {});
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController) location.reload();
+  });
 }
 
 loadVadSettings(); // apply saved per-user VAD tuning before any listening
