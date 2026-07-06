@@ -144,7 +144,9 @@ let hadSpeech = false, speechStart = 0, silenceStart = 0;
 // VAD tunables: RMS energy to count as voice, trailing silence (ms) that ends an
 // utterance, the minimum voiced span to send (drops clicks), and — for barge-in
 // — a HIGHER threshold + a run of frames of loud input over the TTS to cut it.
-const VAD = { threshold: 0.018, silenceMs: 900, minSpeechMs: 250, bargeThreshold: 0.06, bargeFrames: 5 };
+// silenceMs is generous on purpose: people pause between phrases, and cutting a
+// sentence off early is far more annoying than a beat of lag before it sends.
+const VAD = { threshold: 0.014, silenceMs: 2200, minSpeechMs: 250, bargeThreshold: 0.06, bargeFrames: 5 };
 let bargeCount = 0; // consecutive loud frames while TTS plays → barge-in
 
 // idleStatus restores the resting indicator: "Listening…" while a hands-free
@@ -363,6 +365,46 @@ function setSpeaking(v) {
   else idleStatus();
 }
 
+// ── voice settings (persisted per browser) ──────────────────────────
+// Sensitivity slider (6..36) ↔ RMS threshold: higher slider = lower threshold =
+// picks up quieter/trailing speech.
+const sensToThreshold = (s) => (42 - s) / 1000;
+const thresholdToSens = (t) => Math.round(42 - t * 1000);
+
+function loadVadSettings() {
+  const sm = parseInt(localStorage.getItem("yscr.silenceMs") || "", 10);
+  if (sm >= 800 && sm <= 6000) VAD.silenceMs = sm;
+  const th = parseFloat(localStorage.getItem("yscr.threshold") || "");
+  if (th >= 0.006 && th <= 0.036) VAD.threshold = th;
+}
+
+function initSettings() {
+  const sr = $("#silence-range"), so = $("#silence-out");
+  sr.value = VAD.silenceMs;
+  const showS = () => (so.textContent = (VAD.silenceMs / 1000).toFixed(1) + "s");
+  showS();
+  sr.addEventListener("input", () => {
+    VAD.silenceMs = parseInt(sr.value, 10);
+    showS();
+    localStorage.setItem("yscr.silenceMs", String(VAD.silenceMs));
+  });
+
+  const nr = $("#sens-range"), no = $("#sens-out");
+  nr.value = thresholdToSens(VAD.threshold);
+  const showN = () => (no.textContent = nr.value);
+  showN();
+  nr.addEventListener("input", () => {
+    VAD.threshold = sensToThreshold(parseInt(nr.value, 10));
+    showN();
+    localStorage.setItem("yscr.threshold", String(VAD.threshold));
+  });
+
+  $("#settings-btn").addEventListener("click", () => {
+    const p = $("#settings");
+    p.hidden = !p.hidden;
+  });
+}
+
 // Tap to toggle hands-free listening: tap on and it listens continuously,
 // auto-sending each utterance on a trailing pause (VAD); tap off to stop.
 // Either way, first cut any reply that's currently playing.
@@ -390,6 +432,9 @@ $("#speak").addEventListener("click", () => {
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(() => {});
 }
+
+loadVadSettings(); // apply saved per-user VAD tuning before any listening
+initSettings();
 
 $("#composer").addEventListener("submit", (e) => {
   e.preventDefault();

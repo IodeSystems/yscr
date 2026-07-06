@@ -27,6 +27,16 @@ header h1 { font-size: 18px; margin: 0; letter-spacing: .08em; }
 }
 .actions button.on { border-color: var(--accent); color: var(--accent); }
 
+.settings {
+  padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.settings[hidden] { display: none; }
+.settings label { font-size: 13px; color: var(--fg); display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.settings output { color: var(--accent); font-weight: 600; }
+.settings .hint { color: var(--muted); font-size: 11px; flex-basis: 100%; }
+.settings input[type="range"] { width: 100%; margin: 2px 0 8px; accent-color: var(--accent); }
+
 #fleet { padding: 8px 12px; border-bottom: 1px solid var(--line); max-height: 40dvh; overflow-y: auto; }
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px;

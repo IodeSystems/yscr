@@ -15,10 +15,24 @@
     <h1>YSCR</h1>
     <div class="actions">
       <button id="speak" title="Speak replies aloud">🔊</button>
+      <button id="settings-btn" title="Voice settings">⚙</button>
       <button id="refresh" title="Refresh fleet">⟳</button>
       <button id="enable-push" title="Enable notifications">🔔</button>
     </div>
   </header>
+
+  <div id="settings" class="settings" hidden>
+    <label for="silence-range">
+      Pause before it sends <output id="silence-out"></output>
+      <span class="hint">how long to wait after you stop talking</span>
+    </label>
+    <input id="silence-range" type="range" min="800" max="6000" step="100" />
+    <label for="sens-range">
+      Mic sensitivity <output id="sens-out"></output>
+      <span class="hint">higher = picks up quieter/trailing speech</span>
+    </label>
+    <input id="sens-range" type="range" min="6" max="36" step="1" />
+  </div>
 
   <div id="bg-activity" class="bg-activity" hidden aria-live="polite"></div>
 
