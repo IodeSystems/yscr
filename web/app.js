@@ -31,6 +31,7 @@ function bubble(text, cls) {
 }
 
 async function send(message, voice) {
+  stopSpeaking(); // a new turn cuts any reply still playing
   bubble(message, voice ? "you voice" : "you");
   const pending = bubble("", "yscr thinking");
   pending.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
@@ -140,9 +141,11 @@ let finalizeSend = false;    // set right before segRec.stop() to send-or-drop
 let speaking = false;        // TTS playing → suppress capture (echo/self-trigger)
 let hadSpeech = false, speechStart = 0, silenceStart = 0;
 
-// VAD tunables: RMS energy threshold to count as voice, trailing silence (ms)
-// that ends an utterance, and the minimum voiced span to send (drops clicks).
-const VAD = { threshold: 0.018, silenceMs: 900, minSpeechMs: 250 };
+// VAD tunables: RMS energy to count as voice, trailing silence (ms) that ends an
+// utterance, the minimum voiced span to send (drops clicks), and — for barge-in
+// — a HIGHER threshold + a run of frames of loud input over the TTS to cut it.
+const VAD = { threshold: 0.018, silenceMs: 900, minSpeechMs: 250, bargeThreshold: 0.06, bargeFrames: 5 };
+let bargeCount = 0; // consecutive loud frames while TTS plays → barge-in
 
 // idleStatus restores the resting indicator: "Listening…" while a hands-free
 // session is open, otherwise hidden.
@@ -178,7 +181,12 @@ function extForMime(mime) {
 async function startListening() {
   if (listening) return;
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // echoCancellation lets the browser subtract the played TTS from the mic so
+    // barge-in (talking over a reply) works without headphones; the others clean
+    // the input for the VAD + Whisper.
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
   } catch (e) {
     console.warn("mic denied", e);
     $("#mic").classList.remove("on");
@@ -258,6 +266,21 @@ function monitorVAD() {
     for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
     const rms = Math.sqrt(sum / buf.length);
     const now = performance.now();
+
+    // Barge-in: while the reply is playing, capture is paused (echo). Watch for a
+    // sustained run of LOUD input (above residual echo) and cut the TTS — the
+    // resumed segment then captures the rest of what you're saying.
+    if (speaking) {
+      if (rms > VAD.bargeThreshold) {
+        if (++bargeCount >= VAD.bargeFrames) { bargeCount = 0; stopSpeaking(); }
+      } else {
+        bargeCount = 0;
+      }
+      vadRAF = requestAnimationFrame(tick);
+      return;
+    }
+    bargeCount = 0;
+
     const voiced = rms > VAD.threshold && !speaking;
     if (voiced) {
       if (!hadSpeech) { hadSpeech = true; speechStart = now; setStatus("Recording…", "rec"); }
@@ -295,6 +318,8 @@ async function transcribeAndSend(blob, ext) {
   }
 }
 
+let ttsUrl = null; // object URL of the reply currently loaded/playing
+
 async function speak(text) {
   try {
     const r = await api("/api/audio/speech", {
@@ -303,35 +328,53 @@ async function speak(text) {
       body: JSON.stringify({ input: text, model: audioCfg.tts_model, voice: audioCfg.tts_voice || undefined }),
     });
     const buf = await r.blob();
-    const url = URL.createObjectURL(buf);
-    setSpeaking(true); // suppress VAD capture while the reply plays
-    ttsAudio.onended = () => { URL.revokeObjectURL(url); setSpeaking(false); };
-    ttsAudio.onerror = () => setSpeaking(false);
-    ttsAudio.src = url;
-    ttsAudio.play().catch((e) => { console.warn("tts play failed", e); setSpeaking(false); });
+    stopSpeaking(); // cut any prior reply before starting this one
+    ttsUrl = URL.createObjectURL(buf);
+    ttsAudio.onended = () => stopSpeaking();
+    ttsAudio.onerror = () => stopSpeaking();
+    ttsAudio.src = ttsUrl;
+    setSpeaking(true); // suppress VAD capture + show the interruptible status
+    ttsAudio.play().catch((e) => { console.warn("tts play failed", e); stopSpeaking(); });
   } catch (e) {
     console.warn("tts fetch failed", e);
-    setSpeaking(false);
+    stopSpeaking();
   }
 }
 
-// setSpeaking gates hands-free capture during TTS: it pauses the live segment
-// recorder so the concierge's own voice isn't recorded/transcribed, and resumes
-// (with a fresh silence window) when playback ends.
+// stopSpeaking interrupts the current reply — from a manual tap, a voice barge-in,
+// or a new message — and hands control back to listening.
+function stopSpeaking() {
+  if (!speaking && !ttsUrl) return;
+  try { ttsAudio.pause(); ttsAudio.currentTime = 0; } catch (_) {}
+  if (ttsUrl) { URL.revokeObjectURL(ttsUrl); ttsUrl = null; }
+  setSpeaking(false);
+}
+
+// setSpeaking gates hands-free capture during TTS: pause the live segment
+// recorder so the concierge's own voice isn't recorded, and resume (fresh
+// silence window) when playback ends. It also drives the interruptible status.
 function setSpeaking(v) {
   speaking = v;
-  if (!segRec) return;
-  if (v && segRec.state === "recording") segRec.pause();
-  if (!v && segRec.state === "paused") { hadSpeech = false; silenceStart = 0; segRec.resume(); idleStatus(); }
+  if (segRec) {
+    if (v && segRec.state === "recording") segRec.pause();
+    if (!v && segRec.state === "paused") { hadSpeech = false; silenceStart = 0; segRec.resume(); }
+  }
+  if (v) setStatus("Speaking… tap to stop", "think");
+  else idleStatus();
 }
 
 // Tap to toggle hands-free listening: tap on and it listens continuously,
 // auto-sending each utterance on a trailing pause (VAD); tap off to stop.
+// Either way, first cut any reply that's currently playing.
 const mic = $("#mic");
 mic.addEventListener("click", () => {
+  stopSpeaking();
   if (listening) stopListening();
   else startListening();
 });
+
+// Tap the status line while a reply is playing to stop it (manual interrupt).
+$("#status").addEventListener("click", () => { if (speaking) stopSpeaking(); });
 
 $("#speak").addEventListener("click", () => {
   speakOn = !speakOn;
