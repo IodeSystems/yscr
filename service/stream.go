@@ -143,6 +143,7 @@ func (s *Server) watch(ctx context.Context) {
 			return
 		case <-ticker.C:
 			states := s.fleetStates(ctx)
+			s.summ.observe(ctx, states) // throttled background digests
 			cur := make(map[string]snap, len(states))
 			changed := false
 			for _, st := range states {

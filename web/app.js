@@ -281,6 +281,20 @@ function toast(title, body) {
   el.scrollIntoView({ block: "end" });
 }
 
+// Background activity: the server summarizing sessions in the background. Track
+// the set of in-flight sessions and show a subtle strip while any are active.
+const bgActive = new Map(); // session key → title
+function renderBgActivity() {
+  const el = $("#bg-activity");
+  if (!bgActive.size) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML = `<span class="spin"></span>Summarizing ${escape([...bgActive.values()].join(", "))}…`;
+}
+
 function connectStream() {
   if (!("EventSource" in window)) return false;
   const es = new EventSource("/api/stream");
@@ -291,6 +305,14 @@ function connectStream() {
       toast(n.title, n.body);
     } catch (_) {}
     loadFleet();
+  });
+  es.addEventListener("activity", (e) => {
+    try {
+      const a = JSON.parse(e.data);
+      if (a.kind === "summarizing") bgActive.set(a.session, a.title || a.session);
+      else bgActive.delete(a.session);
+      renderBgActivity();
+    } catch (_) {}
   });
   es.onerror = () => {}; // EventSource auto-reconnects
   return true;

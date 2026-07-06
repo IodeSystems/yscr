@@ -25,7 +25,9 @@ import (
 // Server is the running yscr service.
 type Server struct {
 	cfg       *config.Config
+	runner    agent.LLMRunner
 	conc      *concierge.Concierge
+	summ      *summarizer
 	sources   []source.Source
 	push      *pushHub
 	sse       *sseHub
@@ -64,15 +66,28 @@ func New(cfg *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
+	s := &Server{
 		cfg:       cfg,
+		runner:    runner,
 		conc:      concierge.New(runner, convStore, sources...),
 		sources:   sources,
 		push:      ph,
 		sse:       newSSEHub(),
 		sessionID: "primary",
-	}, nil
+	}
+	s.summ = newSummarizer(runner, s.broadcastActivity, s.broadcastFleet)
+	return s, nil
 }
+
+// broadcastActivity emits a background-activity SSE event (the concierge working
+// on a session in the background — e.g. summarizing). kind is "summarizing" or
+// "idle".
+func (s *Server) broadcastActivity(kind, key, title string) {
+	s.sse.broadcast(sseMsg{event: "activity", data: mustJSON(map[string]string{"kind": kind, "session": key, "title": title})})
+}
+
+// broadcastFleet nudges connected clients to re-pull /api/fleet.
+func (s *Server) broadcastFleet() { s.sse.broadcast(sseMsg{event: "fleet", data: "{}"}) }
 
 // Notify pushes a notification to every subscribed client. The narration layer
 // (and any alerting) calls this. Returns how many were delivered.
@@ -118,7 +133,15 @@ func (s *Server) handleConverse(w http.ResponseWriter, r *http.Request) {
 // handleFleet aggregates List+State across every source — the non-LLM status
 // channel the PWA polls (and the SSE watcher diffs).
 func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": s.fleetStates(r.Context())})
+	states := s.fleetStates(r.Context())
+	// Overlay the throttled LLM digest where we have one; the raw source tail
+	// stands in until the first summary lands.
+	for i := range states {
+		if d := s.summ.summaryFor(sessionKey(states[i].Ref)); d != "" {
+			states[i].Summary = d
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": states})
 }
 
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
