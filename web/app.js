@@ -30,8 +30,8 @@ function bubble(text, cls) {
   return el;
 }
 
-async function send(message) {
-  bubble(message, "you");
+async function send(message, voice) {
+  bubble(message, voice ? "you voice" : "you");
   const pending = bubble("", "yscr thinking");
   pending.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
   setStatus("Thinking…", "think");
@@ -287,7 +287,7 @@ async function transcribeAndSend(blob, ext) {
     const r = await api("/api/audio/transcriptions", { method: "POST", body: fd });
     const data = await r.json();
     const text = (data.text || "").trim();
-    if (text) send(text); // send() takes over the status (Thinking…) and clears it
+    if (text) send(text, true); // voice-flagged; send() takes over the status
     else idleStatus();
   } catch (e) {
     idleStatus();
