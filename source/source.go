@@ -23,6 +23,7 @@ type SessionRef struct {
 	Source string // plugin id — "autowork" | "claude-code" | "openai"
 	ID     string // source-local session id (autowork thread id, tmux name, …)
 	Title  string
+	Dir    string // working directory, when the source has one (claude-code); optional
 }
 
 // Status is the coarse lifecycle a concierge digest cares about.

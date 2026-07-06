@@ -110,6 +110,7 @@ var conciergeTools = []llm.ToolDef{
 		"source": strProp("the source id"),
 		"title":  strProp("a short title for the work"),
 		"prompt": strProp("what the work should do — the first instruction"),
+		"dir":    strProp("working directory to launch in — REQUIRED for claude-code (absolute path); ignored by other sources"),
 	}, "source", "prompt")),
 	toolDef("answer_questionnaire", "Submit the user's answers to a questionnaire awaiting them (a decision). Gather the answers CONVERSATIONALLY first, then submit them here as {field_key: value}. A choice value must be one of that field's listed options.", objSchema(map[string]any{
 		"source":           strProp("the source id"),
@@ -151,11 +152,15 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 		if !ok {
 			return fmt.Sprintf("source %q cannot spawn work.", str("source")), nil
 		}
-		ref, err := sp.Spawn(ctx, source.SpawnSpec{Title: str("title"), Prompt: str("prompt")})
+		ref, err := sp.Spawn(ctx, source.SpawnSpec{Title: str("title"), Prompt: str("prompt"), Dir: str("dir")})
 		if err != nil {
 			return fmt.Sprintf("spawn failed: %v", err), nil
 		}
-		return fmt.Sprintf("started %s/%s (%s).", ref.Source, ref.ID, ref.Title), nil
+		where := ""
+		if ref.Dir != "" {
+			where = " in " + ref.Dir
+		}
+		return fmt.Sprintf("started %s/%s (%s)%s.", ref.Source, ref.ID, ref.Title, where), nil
 	case "answer_questionnaire":
 		return c.answerQuestionnaire(ctx, str("source"), str("id"), str("questionnaire_id"), args["answers"]), nil
 	default:
@@ -187,7 +192,11 @@ func (c *Concierge) fleetStatus(ctx context.Context) string {
 			if title == "" {
 				title = "(untitled)"
 			}
-			fmt.Fprintf(&b, "- %s/%s %q [%s]: %s\n", sid, ref.ID, title, st.Status, st.Summary)
+			dir := ""
+			if ref.Dir != "" {
+				dir = " (" + ref.Dir + ")"
+			}
+			fmt.Fprintf(&b, "- %s/%s %q%s [%s]: %s\n", sid, ref.ID, title, dir, st.Status, st.Summary)
 		}
 	}
 	if total == 0 {

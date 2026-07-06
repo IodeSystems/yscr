@@ -108,7 +108,13 @@ async function enablePush() {
 let audioCfg = { stt_model: "", tts_model: "", tts_voice: "" };
 let speakOn = false;
 let recorder = null;
+let recordCancelled = false; // release-before-getUserMedia guard
 let chunks = [];
+
+// One persistent element, unlocked inside a user gesture (iOS Safari requires
+// user-activation to play audio; a later async .play() on an already-unlocked
+// element is allowed).
+const ttsAudio = new Audio();
 
 async function loadAudioConfig() {
   try {
@@ -122,35 +128,56 @@ async function loadAudioConfig() {
   }
 }
 
+// extForMime maps a MediaRecorder mimeType to a matching filename extension
+// (corrallm content-sniffs, but keep the name honest across browsers).
+function extForMime(mime) {
+  if (!mime) return "webm";
+  if (mime.includes("mp4") || mime.includes("m4a") || mime.includes("aac")) return "m4a";
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("wav")) return "wav";
+  return "webm";
+}
+
 async function startRecording() {
   if (recorder) return;
+  recordCancelled = false;
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (_) {
+  } catch (e) {
+    console.warn("mic denied", e);
+    $("#mic").classList.remove("on");
+    return;
+  }
+  // Released before the mic opened → don't leave an orphan recorder running.
+  if (recordCancelled) {
+    stream.getTracks().forEach((t) => t.stop());
+    $("#mic").classList.remove("on");
     return;
   }
   chunks = [];
   recorder = new MediaRecorder(stream);
+  const mime = recorder.mimeType;
   recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   recorder.onstop = async () => {
     stream.getTracks().forEach((t) => t.stop());
-    const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+    const blob = new Blob(chunks, { type: mime || "audio/webm" });
     recorder = null;
-    await transcribeAndSend(blob);
+    if (blob.size) await transcribeAndSend(blob, extForMime(mime));
   };
   $("#mic").classList.add("on");
   recorder.start();
 }
 
 function stopRecording() {
+  recordCancelled = true; // covers release-before-getUserMedia
   if (recorder && recorder.state !== "inactive") recorder.stop();
   $("#mic").classList.remove("on");
 }
 
-async function transcribeAndSend(blob) {
+async function transcribeAndSend(blob, ext) {
   const fd = new FormData();
-  fd.append("file", blob, "speech.webm");
+  fd.append("file", blob, "speech." + (ext || "webm"));
   if (audioCfg.stt_model) fd.append("model", audioCfg.stt_model);
   try {
     const r = await api("/api/audio/transcriptions", { method: "POST", body: fd });
@@ -170,21 +197,33 @@ async function speak(text) {
       body: JSON.stringify({ input: text, model: audioCfg.tts_model, voice: audioCfg.tts_voice || undefined }),
     });
     const buf = await r.blob();
-    const audio = new Audio(URL.createObjectURL(buf));
-    audio.play().catch(() => {});
-  } catch (_) {}
+    const url = URL.createObjectURL(buf);
+    ttsAudio.onended = () => URL.revokeObjectURL(url);
+    ttsAudio.src = url;
+    ttsAudio.play().catch((e) => console.warn("tts play failed", e));
+  } catch (e) {
+    console.warn("tts fetch failed", e);
+  }
 }
 
 // Hold-to-talk (pointer) — press to record, release to transcribe + send.
+// setPointerCapture so a drag off the button (desktop) doesn't end the hold.
 const mic = $("#mic");
-mic.addEventListener("pointerdown", (e) => { e.preventDefault(); startRecording(); });
+mic.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  try { mic.setPointerCapture(e.pointerId); } catch (_) {}
+  startRecording();
+});
 mic.addEventListener("pointerup", (e) => { e.preventDefault(); stopRecording(); });
-mic.addEventListener("pointerleave", stopRecording);
 mic.addEventListener("pointercancel", stopRecording);
 
 $("#speak").addEventListener("click", () => {
   speakOn = !speakOn;
   $("#speak").classList.toggle("on", speakOn);
+  if (speakOn) {
+    // Unlock the audio element within this gesture so later async replies play.
+    ttsAudio.play().then(() => ttsAudio.pause()).catch(() => {});
+  }
 });
 
 // ── boot ────────────────────────────────────────────────────────────

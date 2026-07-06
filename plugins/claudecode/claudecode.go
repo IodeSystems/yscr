@@ -183,14 +183,14 @@ func (p *Plugin) List(_ context.Context) ([]source.SessionRef, error) {
 	}
 	refs := make([]source.SessionRef, 0, len(list))
 	for _, m := range list {
-		refs = append(refs, source.SessionRef{Source: sourceID, ID: m.SessionID, Title: title(m.Cwd)})
+		refs = append(refs, source.SessionRef{Source: sourceID, ID: m.SessionID, Title: title(m.Cwd), Dir: m.Cwd})
 	}
 	return refs, nil
 }
 
 func (p *Plugin) State(ctx context.Context, sid string) (source.State, error) {
 	cwd := p.cwdOf(sid)
-	ref := source.SessionRef{Source: sourceID, ID: sid, Title: title(cwd)}
+	ref := source.SessionRef{Source: sourceID, ID: sid, Title: title(cwd), Dir: cwd}
 
 	// Running in our tmux? → live pane.
 	name := p.tmuxName(sid)
@@ -232,7 +232,9 @@ func (p *Plugin) Spawn(ctx context.Context, spec source.SpawnSpec) (source.Sessi
 	name := p.tmuxName(sid)
 	dir := spec.Dir
 	if dir == "" {
-		dir, _ = os.Getwd()
+		// Default to the user's home, NOT the daemon's cwd (which would land
+		// claude in yscr's own repo tree).
+		dir, _ = os.UserHomeDir()
 	}
 	if err := p.launch(ctx, name, dir, append(sliceOf(p.command), "--session-id", sid)); err != nil {
 		return source.SessionRef{}, err
@@ -245,7 +247,7 @@ func (p *Plugin) Spawn(ctx context.Context, spec source.SpawnSpec) (source.Sessi
 	if t == "" {
 		t = title(dir)
 	}
-	return source.SessionRef{Source: sourceID, ID: sid, Title: t}, nil
+	return source.SessionRef{Source: sourceID, ID: sid, Title: t, Dir: dir}, nil
 }
 
 // Observe emits the latest assistant reply once, then closes.
