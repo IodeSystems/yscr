@@ -139,10 +139,12 @@ type Source interface {
 
 // SpawnSpec describes new work to start. Fields are advisory — each source
 // maps what it can (autowork: Title→thread name, Prompt→first issue;
-// claude-code: Prompt→the initial CLI prompt; openai: Prompt→first message).
+// claude-code: Dir→working directory, Prompt→the initial CLI prompt;
+// openai: Prompt→first message).
 type SpawnSpec struct {
 	Title  string
 	Prompt string
+	Dir    string // working directory (claude-code launches here); "" = default
 }
 
 // Spawner is the optional capability to start a new session in a source.

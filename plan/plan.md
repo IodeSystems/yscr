@@ -94,11 +94,16 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   shape from autowork (source-that-is-an-agent) → validates the contract
   against a non-remote backend. Tested (Spawn/Post/State/List).
 - ✅ **claude-code plugin** (`plugins/claudecode`) — sessions are Claude Code
-  CLI processes in detached tmux windows, driven via `tmux new-session /
-  send-keys -l / capture-pane -p` (Command configurable; exec-seam for tests).
-  Spawn starts + sends the prompt, Post types into the pane, State reads the
-  last pane lines, List prunes dead sessions, Kill tears down. Tested (fake
-  exec) + tmux command forms verified live.
+  CLI in detached tmux windows, keyed by Claude's own session UUID. Reads
+  Claude's home-dir metadata (`~/.claude/sessions/*.json` index: sessionId +
+  cwd + status + updatedAt; `~/.claude/projects/<enc-cwd>/<sid>.jsonl`
+  transcript). **List** = resumable sessions from the index (newest-first,
+  capped). **Resume** = `Post` to a dormant session → `claude --resume <sid>`
+  in its cwd. **Launch in a dir** = `Spawn(SpawnSpec{Dir,Prompt})` →
+  `claude --session-id <uuid>` under `tmux -c <dir>`. State: live pane if
+  running, else transcript tail. Mechanics mirror the `ccoa` bridge.
+  `source.SpawnSpec` gained a `Dir` field. Tested (fake ~/.claude + exec seam);
+  real index parses (5 sessions). Kill tears down.
 
 **Three backends now satisfy `source.Source`** — a remote HTTP daemon
 (autowork), in-process agentkit conversations (openai), and tmux-hosted CLIs

@@ -3,100 +3,135 @@ package claudecode
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/iodesystems/yscr/source"
 )
 
-// fakeTmux records tmux invocations and returns canned output.
-type fakeTmux struct {
-	calls [][]string
-	pane  string
-	alive bool
-}
+// fakeTmux records tmux invocations. has-session always fails (nothing runs
+// under us in tests), so the dormant/resume paths exercise.
+type fakeTmux struct{ calls [][]string }
 
 func (f *fakeTmux) run(_ context.Context, _ string, args ...string) (string, error) {
 	f.calls = append(f.calls, args)
 	switch args[0] {
-	case "capture-pane":
-		return f.pane, nil
 	case "has-session":
-		if f.alive {
-			return "", nil
-		}
 		return "", fmt.Errorf("no session")
 	default:
 		return "", nil
 	}
 }
 
-func (f *fakeTmux) sawArg(want string) bool {
+func (f *fakeTmux) sawSeq(sub ...string) bool {
 	for _, c := range f.calls {
-		for _, a := range c {
-			if a == want {
-				return true
+		joined := " " + strings.Join(c, " ") + " "
+		ok := true
+		for _, s := range sub {
+			if !strings.Contains(joined, " "+s+" ") {
+				ok = false
+				break
 			}
+		}
+		if ok {
+			return true
 		}
 	}
 	return false
 }
 
-func newTestPlugin(f *fakeTmux) *Plugin {
-	p := New(Config{Command: []string{"claude"}})
+// fakeHome builds a temp ~/.claude with a session index + one transcript.
+func fakeHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "sessions"), 0o755)
+	write := func(p, s string) {
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(home, "sessions", "1.json"), `{"sessionId":"sess-A","cwd":"/repo/alpha","status":"shell","updatedAt":200}`)
+	write(filepath.Join(home, "sessions", "2.json"), `{"sessionId":"sess-B","cwd":"/repo/beta","status":"shell","updatedAt":100}`)
+	// transcript for sess-A (project dir = cwd with / and . → -)
+	write(filepath.Join(home, "projects", "-repo-alpha", "sess-A.jsonl"),
+		`{"type":"user","message":{"role":"user","content":"hi"}}`+"\n"+
+			`{"type":"assistant","message":{"stop_reason":"end_turn","content":[{"type":"text","text":"hello from alpha"}]}}`+"\n")
+	return home
+}
+
+func newTest(home string, f *fakeTmux) *Plugin {
+	p := New(Config{Home: home})
 	p.exec = f.run
 	p.now = func() int64 { return 7 }
+	p.newID = func() string { return "new-uuid" }
 	return p
 }
 
-func TestSpawnListStatePost(t *testing.T) {
-	f := &fakeTmux{pane: "booting\nclaude> analyzing repo\nclaude> done, what next?", alive: true}
-	p := newTestPlugin(f)
-	ctx := context.Background()
-
-	ref, err := p.Spawn(ctx, source.SpawnSpec{Title: "Fix lint", Prompt: "run the linter"})
+func TestList_FromIndex(t *testing.T) {
+	p := newTest(fakeHome(t), &fakeTmux{})
+	refs, err := p.List(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ref.Source != "claude-code" || ref.ID != "s1" {
-		t.Fatalf("spawn ref = %+v", ref)
+	if len(refs) != 2 {
+		t.Fatalf("list = %+v; want 2", refs)
 	}
-	// new-session started + the prompt was typed.
-	if !f.sawArg("new-session") || !f.sawArg("run the linter") || !f.sawArg("Enter") {
-		t.Fatalf("spawn did not drive tmux: %v", f.calls)
+	// Newest (sess-A, updatedAt 200) first; title = cwd basename.
+	if refs[0].ID != "sess-A" || refs[0].Title != "alpha" {
+		t.Errorf("refs[0] = %+v", refs[0])
 	}
-
-	refs, err := p.List(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(refs) != 1 || refs[0].ID != "s1" {
-		t.Fatalf("list = %+v", refs)
-	}
-
-	st, _ := p.State(ctx, "s1")
-	if st.Status != source.StatusRunning || !strings.Contains(st.Summary, "what next?") {
-		t.Fatalf("state = %+v", st)
-	}
-
-	if err := p.Post(ctx, "s1", "yes, proceed"); err != nil {
-		t.Fatal(err)
-	}
-	if !f.sawArg("yes, proceed") {
-		t.Errorf("post did not send the message: %v", f.calls)
+	if refs[1].ID != "sess-B" || refs[1].Title != "beta" {
+		t.Errorf("refs[1] = %+v", refs[1])
 	}
 }
 
-// TestList_DropsDeadSession — a session tmux no longer has is pruned.
-func TestList_DropsDeadSession(t *testing.T) {
-	f := &fakeTmux{alive: false}
-	p := newTestPlugin(f)
-	ctx := context.Background()
-	if _, err := p.Spawn(ctx, source.SpawnSpec{Title: "x"}); err != nil {
+func TestSpawn_InDir(t *testing.T) {
+	f := &fakeTmux{}
+	p := newTest(fakeHome(t), f)
+	ref, err := p.Spawn(context.Background(), source.SpawnSpec{Dir: "/repo/gamma", Prompt: "start work"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	refs, _ := p.List(ctx)
-	if len(refs) != 0 {
-		t.Fatalf("dead session not pruned: %+v", refs)
+	if ref.ID != "new-uuid" || ref.Title != "gamma" {
+		t.Fatalf("spawn ref = %+v", ref)
+	}
+	// New session launched in the dir with a fresh --session-id, prompt sent.
+	if !f.sawSeq("new-session", "-c", "/repo/gamma", "--session-id", "new-uuid") {
+		t.Fatalf("spawn tmux args wrong: %v", f.calls)
+	}
+	if !f.sawSeq("send-keys", "start work") {
+		t.Errorf("prompt not sent: %v", f.calls)
+	}
+}
+
+func TestPost_ResumesDormant(t *testing.T) {
+	f := &fakeTmux{}
+	p := newTest(fakeHome(t), f)
+	// sess-A is in the index (cwd /repo/alpha) but not running → Post resumes.
+	if err := p.Post(context.Background(), "sess-A", "continue please"); err != nil {
+		t.Fatal(err)
+	}
+	if !f.sawSeq("new-session", "-c", "/repo/alpha", "--resume", "sess-A") {
+		t.Fatalf("resume not launched in cwd: %v", f.calls)
+	}
+	if !f.sawSeq("send-keys", "continue please") {
+		t.Errorf("message not sent after resume: %v", f.calls)
+	}
+}
+
+func TestState_DormantFromTranscript(t *testing.T) {
+	p := newTest(fakeHome(t), &fakeTmux{})
+	st, err := p.State(context.Background(), "sess-A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != source.StatusIdle {
+		t.Errorf("status = %q; want idle (dormant)", st.Status)
+	}
+	if !strings.Contains(st.Summary, "hello from alpha") {
+		t.Errorf("summary from transcript = %q", st.Summary)
 	}
 }
