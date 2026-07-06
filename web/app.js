@@ -4,6 +4,21 @@
 const $ = (s) => document.querySelector(s);
 const api = (p, opts) => fetch(p, opts).then((r) => (r.ok ? r : Promise.reject(new Error(r.status))));
 
+// ── activity status line (recording / transcribing / thinking) ──────
+// A single-line indicator above the composer. kind drives the dot color +
+// pulse; text is the label. setStatus(null) hides it.
+function setStatus(text, kind) {
+  const el = $("#status");
+  if (!text) {
+    el.hidden = true;
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.dataset.kind = kind || "work";
+  el.innerHTML = `<span class="dot"></span>${escape(text)}`;
+}
+
 // ── conversation ────────────────────────────────────────────────────
 
 function bubble(text, cls) {
@@ -17,7 +32,9 @@ function bubble(text, cls) {
 
 async function send(message) {
   bubble(message, "you");
-  const pending = bubble("…", "yscr");
+  const pending = bubble("", "yscr thinking");
+  pending.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  setStatus("Thinking…", "think");
   try {
     const r = await api("/api/converse", {
       method: "POST",
@@ -25,11 +42,15 @@ async function send(message) {
       body: JSON.stringify({ message }),
     });
     const { reply } = await r.json();
+    pending.classList.remove("thinking");
     pending.textContent = reply || "(no reply)";
     if (speakOn && reply) speak(reply);
   } catch (e) {
+    pending.classList.remove("thinking");
     pending.className = "msg err";
     pending.textContent = "error: " + e.message;
+  } finally {
+    setStatus(null);
   }
   loadFleet();
 }
@@ -164,8 +185,10 @@ async function startRecording() {
     const blob = new Blob(chunks, { type: mime || "audio/webm" });
     recorder = null;
     if (blob.size) await transcribeAndSend(blob, extForMime(mime));
+    else setStatus(null);
   };
   $("#mic").classList.add("on");
+  setStatus("Recording… tap to stop", "rec");
   recorder.start();
 }
 
@@ -176,6 +199,7 @@ function stopRecording() {
 }
 
 async function transcribeAndSend(blob, ext) {
+  setStatus("Transcribing…", "work");
   const fd = new FormData();
   fd.append("file", blob, "speech." + (ext || "webm"));
   if (audioCfg.stt_model) fd.append("model", audioCfg.stt_model);
@@ -183,8 +207,10 @@ async function transcribeAndSend(blob, ext) {
     const r = await api("/api/audio/transcriptions", { method: "POST", body: fd });
     const data = await r.json();
     const text = (data.text || "").trim();
-    if (text) send(text);
+    if (text) send(text); // send() takes over the status (Thinking…) and clears it
+    else setStatus(null);
   } catch (e) {
+    setStatus(null);
     bubble("transcription failed: " + e.message, "err");
   }
 }
