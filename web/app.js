@@ -45,7 +45,9 @@ async function send(message, voice) {
     const { reply } = await r.json();
     pending.classList.remove("thinking");
     pending.textContent = reply || "(no reply)";
-    if (speakOn && reply) speak(reply);
+    // Don't start TTS while the user is actively speaking a new utterance —
+    // it would play over their voice. speak() re-checks after its async fetch.
+    if (speakOn && reply && !userSpeaking()) speak(reply);
   } catch (e) {
     pending.classList.remove("thinking");
     pending.className = "msg err";
@@ -63,6 +65,7 @@ async function loadFleet() {
   try {
     const r = await api("/api/fleet");
     const { sessions } = await r.json();
+    renderQuestions(sessions);
     box.innerHTML = "";
     if (!sessions || !sessions.length) {
       box.innerHTML = '<div class="empty">Nothing active across any source.</div>';
@@ -71,20 +74,144 @@ async function loadFleet() {
     for (const s of sessions) {
       const card = document.createElement("div");
       card.className = "card";
-      const pending = (s.Pending || []).length
-        ? `<div class="pending">${s.Pending.length} decision(s) awaiting you</div>`
+      const pend = (s.Pending || []).length;
+      const pending = pend
+        ? `<span class="pending" title="${pend} decision(s) awaiting you">▲${pend}</span>`
         : "";
+      // Compact card in a horizontal scroller: dot + title on top, clamped
+      // summary below. Fixed row height on mobile; swipe sideways for more.
       card.innerHTML = `
         <div class="top">
+          <span class="dot ${s.Status}" title="${escape(s.Status)}"></span>
           <span class="title">${escape(s.Ref.Title || s.Ref.ID)}</span>
-          <span class="status ${s.Status}">${s.Status}</span>
+          ${pending}
         </div>
-        <div class="summary">${escape(s.Ref.Source)} · ${escape(s.Summary || "")}</div>
-        ${pending}`;
+        <div class="summary">${escape(s.Summary || "")}</div>`;
       box.append(card);
     }
   } catch (e) {
     box.innerHTML = `<div class="empty">fleet unavailable (${e.message})</div>`;
+  }
+}
+
+// ── questions awaiting the user ─────────────────────────────────────
+// Visual half of the concierge's question handling: any session with a pending
+// Questionnaire (e.g. a Claude CLI on an AskUserQuestion) is shown here with
+// its options as tappable chips. A single-choice question answers on one tap;
+// multi-select / multi-field questions toggle then Submit. The concierge can
+// also answer conversationally — both drive the same source Actor.
+function renderQuestions(sessions) {
+  const box = $("#questions");
+  const pend = [];
+  for (const s of sessions || []) for (const q of s.Pending || []) pend.push({ s, q });
+  if (!pend.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = "";
+  for (const { s, q } of pend) box.append(questionCard(s, q));
+}
+
+function questionCard(s, q) {
+  const card = document.createElement("div");
+  card.className = "qcard";
+  const answerable = q.Fields.some((f) => (f.Options || []).length);
+  const oneTap = q.Fields.length === 1 && q.Fields[0].Type === "choice" && (q.Fields[0].Options || []).length > 0;
+  const picks = {}; // field.Key → value (choice) or Set (multi)
+
+  const head = document.createElement("div");
+  head.className = "qhead";
+  head.textContent = `${s.Ref.Source} · ${s.Ref.Title || s.Ref.ID}`;
+  card.append(head);
+
+  const qtext = document.createElement("div");
+  qtext.className = "qtext";
+  qtext.textContent = q.Intro || (q.Fields[0] && q.Fields[0].Prompt) || "Awaiting your answer";
+  card.append(qtext);
+
+  for (const f of q.Fields) {
+    if (q.Fields.length > 1) {
+      const fl = document.createElement("div");
+      fl.className = "qfield";
+      fl.textContent = f.Prompt;
+      card.append(fl);
+    }
+    // No options (e.g. a multi-question tab prompt we can't drive from a card):
+    // show the question read-only with guidance, no chips.
+    if (!(f.Options || []).length) {
+      const note = document.createElement("div");
+      note.className = "qnote";
+      note.textContent = f.Help || "Answer this in the terminal or ask the concierge.";
+      card.append(note);
+      continue;
+    }
+    const multi = f.Type === "multi";
+    if (multi) picks[f.Key] = new Set();
+    const opts = document.createElement("div");
+    opts.className = "qopts";
+    for (const o of f.Options || []) {
+      const chip = document.createElement("button");
+      chip.className = "chip";
+      chip.textContent = o.Label || o.Value;
+      if (o.Detail) chip.title = o.Detail;
+      chip.addEventListener("click", () => {
+        if (oneTap) return submitAnswer(card, s, q, { [f.Key]: o.Value });
+        if (multi) {
+          const set = picks[f.Key];
+          set.has(o.Value) ? set.delete(o.Value) : set.add(o.Value);
+          chip.classList.toggle("on");
+        } else {
+          picks[f.Key] = o.Value;
+          opts.querySelectorAll(".chip").forEach((c) => c.classList.remove("on"));
+          chip.classList.add("on");
+        }
+      });
+      opts.append(chip);
+    }
+    card.append(opts);
+  }
+
+  if (!oneTap && answerable) {
+    const submit = document.createElement("button");
+    submit.className = "qsubmit";
+    submit.textContent = "Submit answer";
+    submit.addEventListener("click", () => {
+      const answers = {};
+      for (const f of q.Fields) {
+        if (f.Type === "multi") answers[f.Key] = [...picks[f.Key]];
+        else if (picks[f.Key] !== undefined) answers[f.Key] = picks[f.Key];
+      }
+      submitAnswer(card, s, q, answers);
+    });
+    card.append(submit);
+  }
+  return card;
+}
+
+async function submitAnswer(card, s, q, answers) {
+  card.classList.add("busy");
+  try {
+    const r = await fetch("/api/answer", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: s.Ref.Source, id: s.Ref.ID, questionnaire_id: q.ID, answers }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || r.status);
+    card.className = "qcard done";
+    card.innerHTML = `<div class="qdone">✓ answered</div>`;
+    loadFleet();
+  } catch (e) {
+    card.classList.remove("busy");
+    let err = card.querySelector(".qerr");
+    if (!err) {
+      err = document.createElement("div");
+      err.className = "qerr";
+      card.append(err);
+    }
+    err.textContent = "couldn't submit: " + e.message;
   }
 }
 
@@ -140,6 +267,10 @@ let segRec = null, segChunks = [], segMime = ""; // current utterance recorder
 let finalizeSend = false;    // set right before segRec.stop() to send-or-drop
 let speaking = false;        // TTS playing → suppress capture (echo/self-trigger)
 let hadSpeech = false, speechStart = 0, silenceStart = 0;
+
+// userSpeaking: the user is mid-utterance in a hands-free session. Used to
+// suppress starting TTS so a reply never plays over the user's own voice.
+function userSpeaking() { return listening && hadSpeech; }
 
 // VAD tunables: RMS energy to count as voice, trailing silence (ms) that ends an
 // utterance, the minimum voiced span to send (drops clicks), and — for barge-in
@@ -330,6 +461,7 @@ async function speak(text) {
       body: JSON.stringify({ input: text, model: audioCfg.tts_model, voice: audioCfg.tts_voice || undefined }),
     });
     const buf = await r.blob();
+    if (userSpeaking()) return; // user started talking during the fetch — don't play over them
     stopSpeaking(); // cut any prior reply before starting this one
     ttsUrl = URL.createObjectURL(buf);
     ttsAudio.onended = () => stopSpeaking();

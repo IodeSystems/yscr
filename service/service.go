@@ -98,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/converse", s.handleConverse)
 	mux.HandleFunc("GET /api/fleet", s.handleFleet)
+	mux.HandleFunc("POST /api/answer", s.handleAnswer)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -142,6 +143,74 @@ func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": states})
+}
+
+// handleAnswer submits a tap-to-answer directly to a source's Actor (no LLM):
+// {source, id, questionnaire_id, answers:{field_key: value}}. It re-fetches the
+// live questionnaire, validates against it (same path as the concierge tool),
+// then Acts and nudges the fleet. The concierge conversation is the other way
+// to answer; this is the visual/tap path.
+func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Source          string         `json:"source"`
+		ID              string         `json:"id"`
+		QuestionnaireID string         `json:"questionnaire_id"`
+		Answers         map[string]any `json:"answers"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Source == "" || in.ID == "" || in.Answers == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "source, id, and answers are required"})
+		return
+	}
+	src := s.sourceByID(in.Source)
+	if src == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unknown source " + in.Source})
+		return
+	}
+	actor, ok := src.(source.Actor)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "source cannot accept answers"})
+		return
+	}
+	// Re-fetch the live questionnaire to validate against (it may have changed).
+	st, err := src.State(r.Context(), in.ID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+	var q *source.Questionnaire
+	for i := range st.Pending {
+		if st.Pending[i].ID == in.QuestionnaireID {
+			q = &st.Pending[i]
+			break
+		}
+	}
+	if q == nil {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "that question is no longer awaiting (already answered or changed)"})
+		return
+	}
+	if err := source.Validate(*q, in.Answers); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	res, err := actor.Act(r.Context(), in.ID, source.Action{
+		Name: "answer_questionnaire",
+		Args: map[string]any{"questionnaire_id": in.QuestionnaireID, "answers": in.Answers},
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+	s.broadcastFleet()
+	writeJSON(w, http.StatusOK, map[string]any{"result": res})
+}
+
+func (s *Server) sourceByID(id string) source.Source {
+	for _, src := range s.sources {
+		if src.ID() == id {
+			return src
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleSubscribe(w http.ResponseWriter, r *http.Request) {
