@@ -1,0 +1,13 @@
+[build]
+  cmd = "go build -o ./tmp/main ./cmd/yscr"
+  full_bin = "./tmp/main -config /home/nthalk/.yscr/config.local.json -listen 0.0.0.0:8600"
+  # web/ assets are go:embed'd, so PWA edits need a rebuild too.
+  include_ext = ["go", "sql", "js", "css", "html", "webmanifest", "svg"]
+  exclude_dir = ["tmp", "plan", "node_modules"]
+  stop_on_error = false
+  send_interrupt = true
+  kill_delay = "500ms"
+  delay = 200
+
+[log]
+  mainOnly = true
