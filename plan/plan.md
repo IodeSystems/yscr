@@ -104,6 +104,49 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   running, else transcript tail. Mechanics mirror the `ccoa` bridge.
   `source.SpawnSpec` gained a `Dir` field. Tested (fake ~/.claude + exec seam);
   real index parses (5 sessions). Kill tears down.
+  - ✅ **adopt the user's own panes (exact pid→tty→pane join)** — the session
+    index `~/.claude/sessions/<pid>.json` is named by the claude PID and carries
+    `{pid, sessionId, cwd, status, name}`; the PID's controlling tty
+    (`/proc/<pid>/fd/0`) joins to a tmux pane (`#{pane_tty}`). So `paneOf(sid)`
+    resolves the exact pane hosting a session — disambiguating multiple claude
+    sessions in the SAME cwd (a cwd match can't). `target`: own session →
+    adopted pane → resume fallback. Post/State/Observe drive the joined pane;
+    recomputed per call (self-heals as panes open/close); Kill only touches
+    yscr-owned sessions. **Automatic — every live claude pane is a driveable
+    yscr session, no explicit adopt step.** Supersedes the earlier cwd
+    heuristic. `Panes(ctx) []PaneInfo` backs the CLI. Linux /proc-specific
+    (deploy is Linux). Tested (drive-adopted / no-pane-resume / State-running /
+    Panes-join). Still one tmux *session* per launched sid — no fan-out of ours.
+  - ✅ **`yscr panes` subcommand** (`cmd/yscr`) — analysis view: prints every
+    live Claude session joined to its pane (SID/PANE/STATUS/NAME/CWD). No
+    daemon; builds the plugin from config. Verified live: 7 panes, same-cwd
+    sessions split by tty.
+  - ✅ **claude-code questionnaires (detect + answer, pane-based)** — KEY
+    FINDING: a *pending* `AskUserQuestion` is NOT in the jsonl — Claude flushes
+    the tool_use to the transcript only AFTER the turn completes (write-behind;
+    proven: `"name":"AskUserQuestion"`=0 while the selector is on screen, =1
+    after answering, mtime jumps). So the jsonl can't be the read for a live
+    question. **Read = the live pane; write = tmux send-keys.**
+    - `parsePaneQuestion(capture-pane)` — parses the active selector (footer
+      "Enter to select · ↑/↓ to navigate") into a `source.Questionnaire`: one
+      Field, options in display order (option i = on-screen digit i+1), drops
+      the appended Type-something/Chat/Submit rows, detects `[ ]` → multiSelect.
+      Stable `questionID` (fnv hash of question+options) so State/Act agree +
+      detect drift. `State` (live-pane branch only — a pending question requires
+      a live TUI) sets `Pending` + `Status`→`awaiting_user`.
+    - `Act` (`source.Actor`) — captures the pane, re-parses, maps each chosen
+      option label → its on-screen digit, and drives the selector: single-select
+      the digit selects+submits; multiSelect toggles each digit, `Right`
+      →Review, `1` →Submit. Guards: not-live / no-question-on-screen / id drift.
+    - Plugs into the delta watcher (awaiting_user rises → SSE notice + push) and
+      the concierge digest + `answer_questionnaire` tool for free — so the
+      concierge can now discuss AND submit answers to a live Claude CLI.
+    - Reverse-engineered the TUI empirically (throwaway probe sessions);
+      validated the full loop live: State→awaiting_user with parsed options,
+      Act→picked the exact option in a real `claude` pane. Unit tests: pane
+      parse (single/multi/no-selector), State awaiting_user, Act
+      single/multi/no-pane/no-question. **Open: multi-QUESTION prompts (tab UI)
+      not yet automated — keystrokesFor rejects len(Fields)!=1.**
 
 **Three backends now satisfy `source.Source`** — a remote HTTP daemon
 (autowork), in-process agentkit conversations (openai), and tmux-hosted CLIs
@@ -146,6 +189,23 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   openai + claude-code (both verified — the concierge spawned real `claude`
   CLIs in tmux) + autowork (points at 127.0.0.1:8402; live when its daemon is
   up). Voice integrated + round-tripped (TTS→STT via the proxy).
+- ✅ **PWA fleet = horizontal card scroller** (`web/`) — was a vertical stack
+  (~68px/session); now a horizontal strip of fixed-width (210px) cards
+  (dot+title, 2-line-clamped summary), so the fleet occupies ONE card-row of
+  vertical space on mobile regardless of session count. Verified live (7 cards,
+  one row).
+- ✅ **TTS suppressed while the user is speaking** (`web/app.js`) — `speak()`
+  is skipped when `userSpeaking()` (hands-free + mid-utterance), and re-checked
+  AFTER the async speech fetch (closes the fetch→play race where a reply would
+  start over a new utterance before barge-in could cut it). Logic-verified.
+- ✅ **transcription snippet capture (debug)** (`service/audio.go`,
+  `config.go`) — `audio.debug_save` tees each upload's audio file part to
+  `~/.yscr/debug-audio/<ts>.<ext>` (best-effort, saved even if upstream STT
+  errors), pruned to newest 300. `GET /api/audio/debug` lists (newest-first),
+  `GET /api/audio/debug/{file}` plays/downloads (base-name-validated, no
+  traversal). For diagnosing VAD early-cutoff vs recorder clipping. **Enabled
+  in config.local.json — now persisting all mic audio.** Verified live
+  (save/list/fetch/traversal-guard).
 - **Known nuance:** agentkit persists tool RESULTS but not the assistant
   tool-CALL, so replaying a tool-heavy conversation yields orphan `tool`
   messages that can confuse the model (it claimed "no memory" after a
@@ -155,22 +215,53 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   claude-code session registries are still in-memory (ephemeral across
   restart — the tmux/convo survive, but the plugin forgets them); systemd unit
   for yscr; optional auth (LAN-only, deferred per Carl).
+- ✅ **claude-code questionnaire — PWA visual presentation + tap-to-answer** —
+  a "Needs you" section (`#questions`, `web/`) renders every `State.Pending`
+  questionnaire below the fleet strip: source·title, the question, and the
+  options as tappable chips. Single-choice = one tap answers; multiSelect =
+  toggle chips + Submit. Submits to `POST /api/answer` (`service.go`,
+  `handleAnswer`) which validates against the live questionnaire (same path as
+  the concierge tool) and calls `source.Actor.Act` directly — NO LLM — then
+  broadcasts fleet. So a question is now BOTH discussed (concierge) and shown
+  (card), per Carl's directive. Verified live against real sessions.
+  - **Pane-parse robustness (learned from real questions):** the parser is
+    scoped to the widget (anchored on the `☐` header line) so numbered lists in
+    the SCROLLBACK (Claude's prose "1. …") no longer leak in as options; preview
+    box-drawing panels are stripped from labels; **multi-question tab prompts**
+    (`← ☐ Q1 ☐ Q2 →` / "Tab to switch questions") are surfaced READ-ONLY (no
+    chips, "answer in the terminal" note) since one card can't drive their tabs.
+    Tested (scrollback-ignored / multi-question / preview-stripped). Verified
+    live: `homelab-horizon` (multi-question) → read-only; `life` (single) →
+    clean chips.
+  - **Known fragility:** pane-scraping a TUI is inherently brittle (wrapped
+    labels get truncated to their first line; unusual layouts may mis-parse).
+    Simple single-question selectors are reliable; exotic ones degrade to
+    read-only or truncated. Not fixable without a structured pending-question
+    source, which Claude doesn't expose (jsonl is write-behind).
+- ◻ **multi-question AskUserQuestion** — `Act` handles single-question prompts;
+  a prompt with >1 question uses a tab UI (`← Q1 Q2 ✔ Submit →`) not yet
+  automated. `keystrokesFor` rejects `len(Fields)!=1` cleanly.
 - ✅ **Deploy (dev proxy via hz):** `hz service create --name ysr --domain
   ysr.iodesystems.com --backend 192.168.1.76:8600 --internal-only
   --internal-dns-ip 192.168.1.160 --health-check /api/health` (mirrors the
   existing internal `ebb` service). Internal DNS resolves ysr → 192.168.1.160
   (HAProxy) → dev-box backend. `proxyUp: true`; PWA + all `/api/*` verified
-  serving over the HAProxy TLS path. yscr runs on the dev box (`~/.local/bin/
-  yscr -listen 0.0.0.0:8600`, currently a nohup bg process — needs a systemd
-  unit for persistence).
-- ◐ **Cert:** hz uses ONE multi-SAN cert per zone (CN=`*.vpn.iodesystems.com`,
+  serving over the HAProxy TLS path. yscr runs on the dev box on `:8600`.
+  - ✅ **dev auto-reload** — `.air.toml` (mirrors autowork3: `go build -o
+    ./tmp/main ./cmd/yscr`, `full_bin` = `-config config.local.json -listen
+    0.0.0.0:8600`; `include_ext` adds js/css/html/webmanifest/svg since web/ is
+    go:embed'd). Runs in a detached tmux session `yscr-air` (attach to inspect).
+    Replaced the frozen 10:56 nohup orphan (was serving a since-deleted binary,
+    so rebuilds never took). Hot-reload verified (pid rotates on a real write).
+  - ◻ still needs a **systemd unit** for reboot-persistence — the `yscr-air`
+    tmux session dies on reboot (dev auto-reload ≠ production supervision).
+- ✅ **Cert:** hz uses ONE multi-SAN cert per zone (CN=`*.vpn.iodesystems.com`,
   SANs = each enabled subdomain: code/kc/llm/vz/…). NOT a wildcard — each
   subdomain is added to the SAN list individually. `hz service create` wires
   DNS+proxy but does NOT enable SSL for the subdomain; that's a separate
-  per-subdomain SSL toggle (Carl enabled it in the hz UI). hz then re-issues
-  the cert via ACME DNS-01 (async, minutes) + reloads HAProxy. As of last
-  check still serving the veliode fallback → re-issuance in flight; will flip
-  to valid once ACME + HAProxy reload complete.
+  per-subdomain SSL toggle (Carl enabled it in the hz UI). hz re-issued the
+  cert via ACME DNS-01 + reloaded HAProxy. **Valid TLS now serving at
+  https://ysr.iodesystems.com.**
 - ◻ **narration** — port distill L1 / utterance L2 materiality-gate / durable
   summary from autowork3's `yscr_status.go` for the voice progress channel.
 
