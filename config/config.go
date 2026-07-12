@@ -65,6 +65,11 @@ type AudioConfig struct {
 	STTModel string `json:"stt_model"` // transcription model (e.g. parakeet)
 	TTSModel string `json:"tts_model"` // speech model (e.g. kokoro)
 	TTSVoice string `json:"tts_voice"` // voice id (backend default if empty)
+	// DebugSave tees each transcription upload to DebugDir + exposes
+	// GET /api/audio/debug[/{file}] for playback. Off by default — it persists
+	// all captured mic audio. For diagnosing VAD cutoff vs recorder clipping.
+	DebugSave bool   `json:"debug_save"`
+	DebugDir  string `json:"debug_dir"` // default ~/.yscr/debug-audio
 }
 
 type VAPIDConfig struct {
