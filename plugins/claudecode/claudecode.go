@@ -19,6 +19,7 @@
 package claudecode
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -52,15 +53,19 @@ type Config struct {
 	Prefix  string   // tmux session-name prefix; "" → "yscr-cc"
 	Home    string   // Claude config dir; "" → $CLAUDE_CONFIG_DIR or ~/.claude
 	Limit   int       // max sessions List returns (most-recent); 0 → 25
+	// PendingDir is where the AskUserQuestion PreToolUse hook drops structured
+	// payloads (yscr hook-question). "" → DefaultPendingDir().
+	PendingDir string
 }
 
 type Plugin struct {
-	tmux    string
-	command []string
-	prefix  string
-	home    string
-	limit   int
-	now     func() int64
+	tmux       string
+	command    []string
+	prefix     string
+	home       string
+	limit      int
+	pendingDir string
+	now        func() int64
 	// exec runs a command and returns combined output. Seam for tests.
 	exec  func(ctx context.Context, name string, args ...string) (string, error)
 	newID func() string
@@ -87,7 +92,8 @@ type liveSess struct {
 func New(cfg Config) *Plugin {
 	p := &Plugin{
 		tmux: cfg.Tmux, command: cfg.Command, prefix: cfg.Prefix, home: cfg.Home, limit: cfg.Limit,
-		now:   func() int64 { return time.Now().UnixNano() },
+		pendingDir: cfg.PendingDir,
+		now:        func() int64 { return time.Now().UnixNano() },
 		exec:  realExec,
 		newID: newUUID,
 		modTime: func(path string) (int64, bool) {
@@ -121,7 +127,20 @@ func New(cfg Config) *Plugin {
 	if p.limit <= 0 {
 		p.limit = 25
 	}
+	if p.pendingDir == "" {
+		p.pendingDir = DefaultPendingDir()
+	}
 	return p
+}
+
+// DefaultPendingDir is where the AskUserQuestion hook drops payloads and where
+// the plugin reads them. Override with $YSCR_PENDING_DIR.
+func DefaultPendingDir() string {
+	if v := os.Getenv("YSCR_PENDING_DIR"); v != "" {
+		return v
+	}
+	h, _ := os.UserHomeDir()
+	return filepath.Join(h, ".yscr", "pending")
 }
 
 func realExec(ctx context.Context, name string, args ...string) (string, error) {
@@ -224,22 +243,31 @@ func (p *Plugin) State(ctx context.Context, sid string) (source.State, error) {
 	cwd := p.cwdOf(sid)
 	ref := source.SessionRef{Source: sourceID, ID: sid, Title: title(cwd), Dir: cwd}
 
-	// Live in a pane — ours or the user's own (exact pid→tty→pane join). A
-	// pending AskUserQuestion exists ONLY in the live TUI (Claude flushes the
-	// tool_use to the transcript only after it's answered), so the pane is the
-	// authoritative read for it. Parse the captured selector into a Questionnaire.
+	// Pending question, structured — the hook payload is authoritative and
+	// geometry-independent. This doesn't need a live pane (though answering does).
+	var pending []source.Questionnaire
+	if q := p.hookQuestion(sid); q != nil {
+		pending = []source.Questionnaire{*q}
+	}
+
+	// Live in a pane — ours or the user's own (exact pid→tty→pane join).
 	if tgt, live := p.target(ctx, sid); live {
 		pane, _ := p.tmuxCmd(ctx, "capture-pane", "-t", tgt, "-p")
-		var pending []source.Questionnaire
-		if q := parsePaneQuestion(pane); q != nil {
-			pending = []source.Questionnaire{*q}
+		if len(pending) == 0 { // no hook → best-effort pane parse
+			if q := parsePaneQuestion(pane); q != nil {
+				pending = []source.Questionnaire{*q}
+			}
 		}
 		return source.State{Ref: ref, Status: statusWith(source.StatusRunning, pending), Summary: lastLines(pane, 3), Pending: pending, UpdatedAt: p.now()}, nil
 	}
 
-	// Not live in a pane → no question can be pending. The transcript JSONL is
-	// appended every turn, so a recent mtime means "active now"; older → dormant.
+	// Not live in a pane. The transcript JSONL is appended every turn, so a
+	// recent mtime means "active now"; older → dormant. A hook question still
+	// promotes to awaiting_user (it can be shown; answering needs the pane back).
 	if cwd == "" {
+		if len(pending) > 0 {
+			return source.State{Ref: ref, Status: source.StatusAwaitingUser, Summary: pending[0].Intro, Pending: pending, UpdatedAt: p.now()}, nil
+		}
 		return source.State{}, fmt.Errorf("claude-code: unknown session %q", sid)
 	}
 	path := p.transcriptPath(cwd, sid)
@@ -251,7 +279,7 @@ func (p *Plugin) State(ctx context.Context, sid string) (source.State, error) {
 	if mt, ok := p.modTime(path); ok && p.now()-mt < activeWindowNS {
 		status = source.StatusRunning
 	}
-	return source.State{Ref: ref, Status: status, Summary: summary, UpdatedAt: p.now()}, nil
+	return source.State{Ref: ref, Status: statusWith(status, pending), Summary: summary, Pending: pending, UpdatedAt: p.now()}, nil
 }
 
 // statusWith promotes a session to awaiting_user when it has a pending
@@ -336,9 +364,9 @@ func (p *Plugin) Observe(ctx context.Context, sid string) (<-chan source.Event, 
 const answerKeyDelay = 300 * time.Millisecond
 
 // Act answers a pending question by driving the live TUI. It READS the question
-// from the live pane (capture-pane) — the only place a pending AskUserQuestion
-// exists — then WRITES the selection as keystrokes: single-select the digit
-// selects+submits; multiSelect toggles each digit, → to Review, 1 to submit.
+// structured (hook payload; pane parse as fallback) to map each chosen option to
+// its on-screen digit, then WRITES the selection as keystrokes: single-select the
+// digit selects+submits; multiSelect toggles each digit, → to Review, 1 to submit.
 // Only "answer_questionnaire" is supported.
 func (p *Plugin) Act(ctx context.Context, sid string, action source.Action) (string, error) {
 	if action.Name != "answer_questionnaire" {
@@ -349,15 +377,19 @@ func (p *Plugin) Act(ctx context.Context, sid string, action source.Action) (str
 	if answers == nil {
 		return "", fmt.Errorf("claude-code: answers must be {field_key: value}")
 	}
-	// The pane must be live to read the question + receive the answer.
+	// The pane must be live to receive the answer.
 	tgt, live := p.target(ctx, sid)
 	if !live {
 		return "", fmt.Errorf("claude-code: session %q is not live in a pane; can't answer", sid)
 	}
-	pane, _ := p.tmuxCmd(ctx, "capture-pane", "-t", tgt, "-p")
-	q := parsePaneQuestion(pane)
+	// Read the question structured (hook), falling back to the pane.
+	q := p.hookQuestion(sid)
 	if q == nil {
-		return "", fmt.Errorf("claude-code: no question is on screen for %q", sid)
+		pane, _ := p.tmuxCmd(ctx, "capture-pane", "-t", tgt, "-p")
+		q = parsePaneQuestion(pane)
+	}
+	if q == nil {
+		return "", fmt.Errorf("claude-code: no question is pending for %q", sid)
 	}
 	// Guard against answering a different question than the one presented: the
 	// id is a stable hash of the on-screen question + options.
@@ -641,7 +673,78 @@ func lastAssistantText(path string) string {
 	return last
 }
 
-// ── pending AskUserQuestion → Questionnaire (from the live pane) ─────
+// ── pending AskUserQuestion → Questionnaire (from the PreToolUse hook) ──
+//
+// The robust read: the `yscr hook-question` PreToolUse hook drops the FULL
+// structured tool_input to <pendingDir>/<session_id>.json the instant the
+// question is presented — geometry-independent, no scraping. Preferred over the
+// pane parser (which is kept as a fallback when the hook isn't installed).
+
+type hookOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+type hookQuestionInput struct {
+	Question    string       `json:"question"`
+	Header      string       `json:"header"`
+	MultiSelect bool         `json:"multiSelect"`
+	Options     []hookOption `json:"options"`
+}
+type hookPayload struct {
+	ToolUseID  string `json:"tool_use_id"`
+	Transcript string `json:"transcript_path"`
+	ToolInput  struct {
+		Questions []hookQuestionInput `json:"questions"`
+	} `json:"tool_input"`
+}
+
+// hookQuestion returns the structured pending question captured by the hook for
+// sid, or nil if there's none — or if it's already answered. Answered-detection
+// leans on write-behind: the tool_use_id lands in the transcript ONLY after the
+// turn completes, so its presence there means "answered" → we clear the file.
+func (p *Plugin) hookQuestion(sid string) *source.Questionnaire {
+	path := filepath.Join(p.pendingDir, sid+".json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var pl hookPayload
+	if json.Unmarshal(b, &pl) != nil || len(pl.ToolInput.Questions) == 0 {
+		return nil
+	}
+	if pl.ToolUseID != "" && pl.Transcript != "" {
+		if tb, err := os.ReadFile(pl.Transcript); err == nil && bytes.Contains(tb, []byte(pl.ToolUseID)) {
+			_ = os.Remove(path) // answered → stale
+			return nil
+		}
+	}
+	return hookToQuestionnaire(pl.ToolUseID, pl.ToolInput.Questions)
+}
+
+// hookToQuestionnaire maps the structured tool_input onto the source contract:
+// one Field per question (choice/multi), options carried verbatim.
+func hookToQuestionnaire(id string, qs []hookQuestionInput) *source.Questionnaire {
+	q := &source.Questionnaire{ID: id, Title: "Claude is asking"}
+	if len(qs) > 0 {
+		q.Intro = qs[0].Question
+	}
+	for i, aq := range qs {
+		f := source.Field{Key: aq.Header, Prompt: aq.Question, Type: source.FieldChoice, Required: true}
+		if aq.MultiSelect {
+			f.Type = source.FieldMulti
+		}
+		if f.Key == "" {
+			f.Key = fmt.Sprintf("q%d", i+1)
+		}
+		for _, o := range aq.Options {
+			f.Options = append(f.Options, source.Option{Value: o.Label, Label: o.Label, Detail: o.Description})
+		}
+		q.Fields = append(q.Fields, f)
+	}
+	return q
+}
+
+// ── pending AskUserQuestion → Questionnaire (from the live pane, fallback) ──
 //
 // A pending AskUserQuestion exists ONLY in the interactive TUI — Claude writes
 // the tool_use to the transcript only after the turn completes (post-answer),

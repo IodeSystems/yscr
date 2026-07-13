@@ -30,9 +30,18 @@ import (
 
 func main() {
 	// Subcommand dispatch (first non-flag arg). Default: run the service.
-	if len(os.Args) > 1 && os.Args[1] == "panes" {
-		runPanes(os.Args[2:])
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "panes":
+			runPanes(os.Args[2:])
+			return
+		case "hook-question": // PreToolUse hook body (reads stdin)
+			runHookQuestion()
+			return
+		case "install-hook": // merge the AskUserQuestion hook into ~/.claude/settings.json
+			runInstallHook()
+			return
+		}
 	}
 	runServe(os.Args[1:])
 }

@@ -265,6 +265,90 @@ func TestParsePaneQuestion_Multi(t *testing.T) {
 	}
 }
 
+// withHook points the plugin at a fresh pending dir and drops a hook payload
+// for sid into it.
+func withHook(t *testing.T, p *Plugin, sid, payload string) {
+	t.Helper()
+	p.pendingDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(p.pendingDir, sid+".json"), []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const hookPayloadJSON = `{
+  "session_id":"sess-A",
+  "tool_use_id":"toolu_ABC",
+  "transcript_path":"%s",
+  "tool_input":{"questions":[{"question":"Deploy?","header":"Deploy","multiSelect":false,
+    "options":[{"label":"Staging","description":"to staging"},{"label":"Production","description":"to prod"}]}]}
+}`
+
+// A hook payload whose tool_use_id is NOT yet in the transcript → pending, with
+// full structured options (no scraping).
+func TestHookQuestion_Pending(t *testing.T) {
+	p := newTest(fakeHome(t), &fakeTmux{})
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tp, []byte(`{"type":"user"}`+"\n"), 0o644) // no toolu_ABC yet
+	withHook(t, p, "sess-A", fmt.Sprintf(hookPayloadJSON, tp))
+	q := p.hookQuestion("sess-A")
+	if q == nil || q.ID != "toolu_ABC" || len(q.Fields) != 1 {
+		t.Fatalf("q = %+v", q)
+	}
+	f := q.Fields[0]
+	if f.Prompt != "Deploy?" || len(f.Options) != 2 || f.Options[1].Value != "Production" || f.Options[0].Detail != "to staging" {
+		t.Errorf("field = %+v", f)
+	}
+}
+
+// Once the tool_use_id appears in the transcript (write-behind = answered), the
+// hook question clears (returns nil, file removed).
+func TestHookQuestion_AnsweredClears(t *testing.T) {
+	p := newTest(fakeHome(t), &fakeTmux{})
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tp, []byte(`{"type":"user","tool_use_id":"toolu_ABC"}`+"\n"), 0o644) // answered
+	withHook(t, p, "sess-A", fmt.Sprintf(hookPayloadJSON, tp))
+	if q := p.hookQuestion("sess-A"); q != nil {
+		t.Errorf("want nil (answered); got %+v", q)
+	}
+	if _, err := os.Stat(filepath.Join(p.pendingDir, "sess-A.json")); !os.IsNotExist(err) {
+		t.Error("stale hook file should have been removed")
+	}
+}
+
+// State promotes to awaiting_user from the hook payload (pane not required).
+func TestState_AwaitingUserFromHook(t *testing.T) {
+	p := newTest(fakeHome(t), &fakeTmux{}) // no pane
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tp, []byte(`{}`+"\n"), 0o644)
+	withHook(t, p, "sess-A", fmt.Sprintf(hookPayloadJSON, tp))
+	st, err := p.State(context.Background(), "sess-A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Status != source.StatusAwaitingUser || len(st.Pending) != 1 {
+		t.Errorf("state = %+v", st)
+	}
+}
+
+// Act reads the hook question (structured) and sends the chosen option's digit.
+func TestAct_UsesHookQuestion(t *testing.T) {
+	f := &fakeTmux{panes: "/dev/pts/1001\twork:2.1\n"} // sess-A live in a pane
+	p := newTest(fakeHome(t), f)
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tp, []byte(`{}`+"\n"), 0o644)
+	withHook(t, p, "sess-A", fmt.Sprintf(hookPayloadJSON, tp))
+	_, err := p.Act(context.Background(), "sess-A", source.Action{
+		Name: "answer_questionnaire",
+		Args: map[string]any{"answers": map[string]any{"Deploy": "Production"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.sawSeq("send-keys", "-t", "work:2.1", "-l", "2") { // Production = option 2
+		t.Errorf("did not send digit 2: %v", f.calls)
+	}
+}
+
 func TestParsePaneQuestion_NoSelector(t *testing.T) {
 	if q := parsePaneQuestion("just a normal shell\n❯ typing here"); q != nil {
 		t.Errorf("want nil (no selector footer); got %+v", q)
