@@ -8,6 +8,7 @@ replace github.com/iodesystems/agentkit => ../agentkit
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/iodesystems/agentkit v0.0.0-00010101000000-000000000000
 	github.com/jackc/pgx/v5 v5.10.0
 )

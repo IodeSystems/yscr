@@ -342,12 +342,20 @@ async function startListening() {
   src.connect(analyser);
   hadSpeech = false;
   silenceStart = 0;
-  startSegment();
+  // Prefer streaming STT; fall back to the MediaRecorder batch path if the
+  // worklet or the WS won't come up.
+  rtMode = false;
+  if (window.AudioWorklet && window.WebSocket) {
+    try { await startRealtime(audioCtx, src); rtMode = true; }
+    catch (e) { console.warn("streaming STT unavailable, using batch", e); rtMode = false; }
+  }
+  if (!rtMode) startSegment();
   monitorVAD();
 }
 
 function stopListening() {
   listening = false;
+  stopRealtime();
   if (vadRAF) { cancelAnimationFrame(vadRAF); vadRAF = 0; }
   const rec = segRec;
   segRec = null;
@@ -424,14 +432,115 @@ function monitorVAD() {
         const spoke = silenceStart - speechStart > VAD.minSpeechMs;
         hadSpeech = false;
         silenceStart = 0;
-        if (spoke) setStatus("Transcribing…", "work");
-        else idleStatus();
-        endUtterance(spoke); // onstop sends (if spoke) + reopens the next segment
+        // Streaming: oidio endpoints + sends server-side, so the local timer only
+        // clears the speech flag (re-enables TTS). Batch: it finalizes the segment.
+        if (rtMode) {
+          if (!rtFlushTimer) idleStatus();
+        } else {
+          if (spoke) setStatus("Transcribing…", "work");
+          else idleStatus();
+          endUtterance(spoke); // onstop sends (if spoke) + reopens the next segment
+        }
       }
     }
     vadRAF = requestAnimationFrame(tick);
   };
   vadRAF = requestAnimationFrame(tick);
+}
+
+// ── streaming STT (realtime WebSocket + PCM worklet) ────────────────
+// Preferred path: stream mic PCM to /api/audio/realtime (→ oidio /v1/realtime),
+// which endpoints server-side and returns partials while you speak + a final on
+// each pause — no 2.6s client silence gate, no record-then-batch round trip.
+// Falls back to the MediaRecorder batch path if the browser lacks AudioWorklet.
+let rtWS = null, rtNode = null, rtMode = false;
+let rtPartial = "";              // growing transcript of the in-flight utterance
+let rtPending = "", rtFlushTimer = 0; // coalesce server's aggressive endpoints
+
+// ab2b64: Int16 PCM ArrayBuffer → base64 (the append message's audio field).
+function ab2b64(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+
+// startRealtime taps the existing mic graph with the PCM worklet and opens the
+// realtime WS. Rejects if the worklet or the socket won't come up, so the caller
+// can fall back to batch. srcNode is the MediaStreamSource already feeding the VAD.
+const RT_RATE = 24000; // corrallm realtime-stt input rate (PCM16 mono @ 24kHz)
+
+async function startRealtime(ctx, srcNode) {
+  await ctx.audioWorklet.addModule("/pcm-worklet.js");
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const model = audioCfg.realtime_model || "realtime-stt";
+  const q = `model=${encodeURIComponent(model)}&intent=transcription`;
+  const ws = new WebSocket(`${proto}//${location.host}/api/audio/realtime?${q}`);
+  ws.binaryType = "arraybuffer";
+  await new Promise((res, rej) => {
+    ws.onopen = res;
+    ws.onerror = () => rej(new Error("realtime ws failed to open"));
+  });
+  rtWS = ws;
+  // Configure the session: model + server-side VAD turn detection (the backend
+  // endpoints and emits .completed on each pause).
+  ws.send(JSON.stringify({
+    type: "session.update",
+    session: { input_audio_transcription: { model }, turn_detection: { type: "server_vad" } },
+  }));
+  ws.onmessage = (ev) => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type === "conversation.item.input_audio_transcription.delta") rtDelta(m.delta || "");
+    else if (m.type === "conversation.item.input_audio_transcription.completed") rtFinal(m.transcript || "");
+  };
+  ws.onclose = () => { if (rtWS === ws) rtWS = null; };
+
+  const node = new AudioWorkletNode(ctx, "pcm-worklet", { processorOptions: { targetRate: RT_RATE } });
+  node.port.onmessage = (ev) => {
+    // Suppress our own TTS (echo/self-trigger) — barge-in still cuts it via the RMS VAD.
+    if (!rtWS || rtWS.readyState !== 1 || speaking) return;
+    rtWS.send(JSON.stringify({ type: "input_audio_buffer.append", audio: ab2b64(ev.data) }));
+  };
+  srcNode.connect(node);
+  // A worklet only runs while connected to the destination; a muted gain pulls it
+  // without playing the mic back through the speakers.
+  const sink = ctx.createGain();
+  sink.gain.value = 0;
+  node.connect(sink);
+  sink.connect(ctx.destination);
+  rtNode = node;
+}
+
+function stopRealtime() {
+  rtMode = false;
+  if (rtFlushTimer) { clearTimeout(rtFlushTimer); rtFlushTimer = 0; }
+  rtPending = ""; rtPartial = "";
+  if (rtNode) { try { rtNode.port.onmessage = null; rtNode.disconnect(); } catch (_) {} rtNode = null; }
+  if (rtWS) { try { rtWS.onclose = null; rtWS.close(); } catch (_) {} rtWS = null; }
+}
+
+function rtDelta(d) {
+  if (!d) return;
+  rtPartial += d;
+  setStatus("… " + rtPartial.trim(), "rec");
+}
+
+// rtFinal: oidio endpoints at ~0.6s of silence, which over-segments a normal
+// utterance with mid-thought pauses. Coalesce completed segments and dispatch as
+// one turn after 700ms of quiet — still ~1.3s total, one send() per utterance.
+function rtFinal(text) {
+  rtPartial = "";
+  text = (text || "").trim();
+  if (!text) return;
+  rtPending = rtPending ? rtPending + " " + text : text;
+  setStatus("Transcribing…", "work");
+  if (rtFlushTimer) clearTimeout(rtFlushTimer);
+  rtFlushTimer = setTimeout(() => {
+    rtFlushTimer = 0;
+    const t = rtPending; rtPending = "";
+    if (t) send(t, true); // voice-flagged; send() takes over the status
+    else idleStatus();
+  }, 700);
 }
 
 async function transcribeAndSend(blob, ext) {

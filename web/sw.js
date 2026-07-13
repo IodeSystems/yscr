@@ -8,8 +8,8 @@
 // fallback. /api is never cached. Bump CACHE on a breaking shell change so the
 // activate handler evicts stale entries.
 
-const CACHE = "yscr-v3";
-const SHELL = ["/", "/index.html", "/app.js", "/styles.css", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "yscr-v4";
+const SHELL = ["/", "/index.html", "/app.js", "/pcm-worklet.js", "/styles.css", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

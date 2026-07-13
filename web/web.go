@@ -3,5 +3,5 @@ package web
 
 import "embed"
 
-//go:embed index.html app.js sw.js styles.css manifest.webmanifest icon.svg
+//go:embed index.html app.js pcm-worklet.js sw.js styles.css manifest.webmanifest icon.svg
 var FS embed.FS

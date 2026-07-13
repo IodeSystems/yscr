@@ -62,7 +62,8 @@ type ClaudeCodeConfig struct {
 type AudioConfig struct {
 	BaseURL  string `json:"base_url"`  // corrallm/oidio; default = LLM.BaseURL
 	APIKey   string `json:"api_key"`   // default = LLM.APIKey; env YSCR_AUDIO_KEY
-	STTModel string `json:"stt_model"` // transcription model (e.g. parakeet)
+	STTModel string `json:"stt_model"` // batch transcription model (e.g. parakeet)
+	RTModel  string `json:"rt_model"`  // streaming STT model for /v1/realtime (e.g. realtime-stt)
 	TTSModel string `json:"tts_model"` // speech model (e.g. kokoro)
 	TTSVoice string `json:"tts_voice"` // voice id (backend default if empty)
 	// DebugSave tees each transcription upload to DebugDir + exposes
@@ -128,6 +129,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Audio.STTModel == "" {
 		c.Audio.STTModel = "stt"
+	}
+	if c.Audio.RTModel == "" {
+		c.Audio.RTModel = "realtime-stt"
 	}
 	if c.Audio.TTSModel == "" {
 		c.Audio.TTSModel = "tts"

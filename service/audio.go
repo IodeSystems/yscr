@@ -66,12 +66,16 @@ func (s *Server) registerAudio(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/audio/transcriptions", s.audioProxy("/v1/audio/transcriptions", audioSTTTimeout, audioMaxUpload))
 	}
 	mux.HandleFunc("POST /api/audio/speech", s.audioProxy("/v1/audio/speech", audioTTSTimeout, 1<<20))
+	// Streaming STT over WebSocket → oidio /v1/realtime (partials + server-side
+	// endpointing; no client silence gate). See realtime.go.
+	mux.HandleFunc("GET /api/audio/realtime", s.handleRealtime)
 	mux.HandleFunc("GET /api/audio/config", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"stt_model":  s.cfg.Audio.STTModel,
-			"tts_model":  s.cfg.Audio.TTSModel,
-			"tts_voice":  s.cfg.Audio.TTSVoice,
-			"debug_save": s.cfg.Audio.DebugSave,
+			"stt_model":      s.cfg.Audio.STTModel,
+			"realtime_model": s.cfg.Audio.RTModel,
+			"tts_model":      s.cfg.Audio.TTSModel,
+			"tts_voice":      s.cfg.Audio.TTSVoice,
+			"debug_save":     s.cfg.Audio.DebugSave,
 		})
 	})
 }

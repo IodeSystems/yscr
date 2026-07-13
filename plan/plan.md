@@ -206,6 +206,46 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
   traversal). For diagnosing VAD early-cutoff vs recorder clipping. **Enabled
   in config.local.json — now persisting all mic audio.** Verified live
   (save/list/fetch/traversal-guard).
+- ◐ **streaming STT — transcription latency (prototype landed, needs live
+  browser drive)** (`service/realtime.go`, `web/pcm-worklet.js`, `web/app.js`).
+  Root cause of latency: batch flow ate a fixed **2.6s** client silence gate +
+  a record-then-POST round trip (`stream=true` on the batch endpoint is fake —
+  oidio decodes the whole clip then replays tokens). Fix = oidio's **realtime
+  WS** (`GET /v1/realtime`), which endpoints server-side (~0.6s) and streams
+  partials → the gate + batch inference both vanish.
+  - **WS proxy** `GET /api/audio/realtime` → oidio `/v1/realtime` (gorilla): key
+    injected outbound, inbound Authorization dropped, `?model` query forwarded,
+    `relayWS` pumps both ways. Same posture as the HTTP audioProxy. Unit-tested
+    against a fake upstream (relay + key-inject + drop-inbound + query-forward).
+  - **PCM worklet** (`pcm-worklet.js`): taps the mic graph, linear-resamples the
+    context rate → **24kHz** (backend rate), PCM16-LE, posts ~85ms frames →
+    main thread base64 → `input_audio_buffer.append`.
+  - **client** (`app.js`): `startListening` prefers streaming (falls back to the
+    MediaRecorder batch path if no AudioWorklet/WS); RMS VAD kept ONLY for
+    barge-in + status; `session.update{server_vad}`; `.delta`→live preview,
+    `.completed`→**700ms coalesce** then `send()` (oidio's 0.6s endpoint
+    over-segments otherwise). New `AudioConfig.RTModel` (default `realtime-stt`)
+    surfaced via `/api/audio/config`.
+  - **Verified**: full TTS→WS→STT loop against the REAL backend
+    (`wss://llm.iodesystems.com/v1/realtime`) — session.created/updated, live
+    deltas, exact `.completed`. Backend contract (model/rate/schema/gateway-WS)
+    all confirmed. **next**: drive the browser mic→worklet path live (only
+    unverified seam; standard Web Audio). **risks**: over-segmentation of long
+    monologues — mitigated two ways now: the 700ms client coalesce AND oidio's
+    endpoint silence is configurable (see below), so `realtime-stt` can raise
+    `rule2_silence` instead of relying on the client patch. **optional**: retire
+    the batch path once streaming proven on-device; show partials in the input box.
+  - ✅ **oidio endpoint silence configurable** (`../services/oidio`:
+    `internal/config/config.go`, `internal/engine/realtime.go`,
+    `oidio.example.yaml`) — the streaming recognizer's three sherpa endpoint
+    rules are now `ModelSpec` yaml (`rule1_silence`/`rule2_silence`/
+    `rule3_min_utterance`), replacing hardcoded 2.4/0.8/20; defaults unchanged.
+    Rule2 (end-of-utterance trailing silence) is the over-segmentation knob:
+    raise it (~1.2–1.5) so mid-thought pauses don't split a turn. Per-session
+    override isn't possible (sherpa endpoint config is recognizer-level), so
+    config-file is the right altitude. Config parse tested; engine builds.
+    **Deploy note**: the live backend (llm.iodesystems.com) runs its own oidio —
+    bump `rule2_silence` there to take effect.
 - **Known nuance:** agentkit persists tool RESULTS but not the assistant
   tool-CALL, so replaying a tool-heavy conversation yields orphan `tool`
   messages that can confuse the model (it claimed "no memory" after a
