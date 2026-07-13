@@ -233,11 +233,27 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
     Tested (scrollback-ignored / multi-question / preview-stripped). Verified
     live: `homelab-horizon` (multi-question) → read-only; `life` (single) →
     clean chips.
-  - **Known fragility:** pane-scraping a TUI is inherently brittle (wrapped
-    labels get truncated to their first line; unusual layouts may mis-parse).
-    Simple single-question selectors are reliable; exotic ones degrade to
-    read-only or truncated. Not fixable without a structured pending-question
-    source, which Claude doesn't expose (jsonl is write-behind).
+  - **Pane-scrape fragility (superseded as primary):** scraping a TUI is
+    brittle (wrapped labels truncate; narrow mobile panes cut options off) —
+    kept only as a FALLBACK now.
+- ✅ **structured question read via PreToolUse hook (primary)** — the robust
+  fix. A `PreToolUse`/`AskUserQuestion` hook runs `yscr hook-question`, which
+  drops the FULL structured `tool_input` (questions + options + descriptions +
+  multiSelect + real `tool_use_id`) to `~/.yscr/pending/<session_id>.json` the
+  instant the question is presented — geometry-independent, zero scraping.
+  `hookQuestion(sid)` reads it → clean Questionnaire (id = tool_use_id).
+  **Answered-detection leans on write-behind:** the tool_use_id lands in the
+  transcript only AFTER the turn completes, so its presence there means answered
+  → the plugin clears the stale file. State/Act prefer the hook; pane-parse is
+  the fallback when the hook isn't installed. `yscr install-hook` merges the
+  hook into `~/.claude/settings.json` (idempotent, backs up first). Verified
+  live end-to-end: hook fires → structured State(awaiting_user) with option
+  descriptions → Act picks the exact option in a real pane → answered → file
+  auto-cleared. Tested (hook pending/answered-clears, State, Act; install-hook
+  merge empty/idempotent/preserves-existing).
+  - **Activation (Carl):** `yscr install-hook` once (adds the hook globally);
+    only questions asked AFTER install get a payload (older ones use the pane
+    fallback).
 - ◻ **multi-question AskUserQuestion** — `Act` handles single-question prompts;
   a prompt with >1 question uses a tab UI (`← Q1 Q2 ✔ Submit →`) not yet
   automated. `keystrokesFor` rejects `len(Fields)!=1` cleanly.
