@@ -42,12 +42,24 @@ type Target struct {
 // aggregate, not per-dir, in phase 1).
 const spawnKey = "\x00spawn"
 
-// key identifies the in-flight bucket a task counts against.
-func (t Target) key() string {
+// Key identifies the in-flight bucket a task counts against — an existing
+// session's "source/id", or the shared spawn bucket. The cue store and the
+// release loop use it to build Plan's inflight map consistently.
+func (t Target) Key() string {
 	if t.Spawn {
 		return spawnKey
 	}
 	return t.Source + "/" + t.SessionID
+}
+
+// Counts tallies tasks by their target bucket — the shape Plan's inflight
+// argument expects. Callers pass the released-not-done tasks from the store.
+func Counts(tasks []Task) map[string]int {
+	m := make(map[string]int, len(tasks))
+	for _, t := range tasks {
+		m[t.Target.Key()]++
+	}
+	return m
 }
 
 // Caps bound how much work is in flight. A zero field means "no limit", except
@@ -128,7 +140,7 @@ func Plan(tasks []Task, fleet []source.State, inflight map[string]int, caps Caps
 	}
 
 	for _, t := range ordered {
-		k := t.Target.key()
+		k := t.Target.Key()
 
 		if caps.Global > 0 && global >= caps.Global {
 			hold(t, "global cap reached")

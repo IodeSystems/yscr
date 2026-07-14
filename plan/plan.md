@@ -67,15 +67,23 @@ cadence) · release loop hooked into the existing fleet watcher (already polls
    defaults to idle/done/awaiting_user — capacity, not idleness, is what lets
    work flow to active sessions) + per-session/global/spawn caps + priority
    ordering. 6 tests green (`cue/cue_test.go`).
-2. ◻ Cue store (Postgres table, alongside `store/pg.go`) + config knobs
-   (gen interval, per-session + global in-flight caps, standing goals). Build
-   `inflight map[string]int` for `Plan` from released-not-done rows.
+2. ✅ Cue store + config knobs. `store/pg.go`: `cue_tasks` table (lifecycle
+   pending→inflight→done|failed; partial UNIQUE index on `dedupe_key` for live
+   rows) + `EnqueueTask` (dedup: skips a live DedupeKey), `PendingTasks`,
+   `InflightTasks`, `MarkInflight/Done/Failed` (status-guarded → double-release
+   is a no-op). `cue.Counts` builds `Plan`'s inflight map via `Target.Key()`.
+   `config.CueConfig` (caps + rails; **safe defaults**: `enabled` off,
+   `DryRunEnabled()` true when unset). DB-gated tests green vs yscr-pg
+   (`store/cue_test.go`): dedupe/lifecycle + store→Plan round-trip.
 3. ◻ Release loop in the fleet watcher: `Plan` → execute RELEASE autonomously
-   (`Post`/`Spawn`) → notify. **Needs rails (see blocking decision).**
-4. ◻ Generator tick: LLM proposes tasks from fleet + goals → cue (dedup on
-   `DedupeKey` vs in-flight/cued so it doesn't re-propose).
+   (`Post`/`Spawn`) → `MarkInflight` → notify. **Needs rails (see blocking
+   decision); config fields already exist (Enabled/DryRun/MaxPerHour).**
+4. ◻ Generator tick: LLM proposes tasks from fleet + `Cue.Goals` → `EnqueueTask`
+   (DedupeKey blocks re-proposing live work).
 
-- **next:** phase 2 — cue store + config knobs (feeds `Plan`'s inflight/caps).
+- **next:** phase 3 — release loop in the fleet watcher. **Gated on the rails
+  decision** (kill-switch = `Cue.Enabled`; dry-run-first = `DryRunEnabled`;
+  hard caps = `MaxPerHour`/`MaxSpawns`). Confirm defaults before it acts live.
 - **risks:** autonomous `Post`/`Spawn` acts on LIVE sessions unsupervised — a bad
   generator proposal or a re-push loop could spam/derail real work. Dedup +
   idempotency + caps are load-bearing, not optional.
