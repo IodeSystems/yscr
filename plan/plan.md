@@ -99,13 +99,28 @@ cadence) · release loop hooked into the existing fleet watcher (already polls
    - Note: awaiting_user is treated as still-in-flight (not complete) for
      reconcile — a session waiting on the user hasn't finished its task.
 
-4. ◻ Generator tick: LLM proposes tasks from fleet + `Cue.Goals` → `EnqueueTask`
-   (DedupeKey blocks re-proposing live work).
+4. ✅ Generator tick (`service/cuegen.go`). On `gen_interval_seconds` cadence,
+   shows the LLM the fleet + `Cue.Goals`, parses a strict-JSON `{tasks:[…]}`
+   proposal (tolerant extraction through prose/fences), and `EnqueueTask`s each
+   (uuid id; DedupeKey supplied or derived `target|prompt`). Store dedup makes
+   re-proposing live work a no-op. Enqueue-only (no session side effects) → runs
+   even in release dry-run. `newCueGenerator` nil unless enabled + store + goals;
+   launched from `Start`. 5 tests (parse/skip-malformed/dedup-count/derive-key/
+   empty/nil-without-goals).
 
-- **next:** phase 4 (generator tick) — the last piece; the deterministic
-  release+reconcile core is done and live-safe. Cue still ships OFF
-  (`Cue.Enabled=false`); to trial: enable with `dry_run:true`, watch the
-  `cue[dry-run]:` logs, then `dry_run:false` + a `max_per_hour`.
+**Task cueing system COMPLETE.** generator (LLM proposes) → durable cue (dedup)
+→ deterministic release gate (status+capacity) → autonomous dispatch (rails:
+kill-switch/dry-run/caps/hourly) → completion reconcile (frees capacity). Every
+seam unit-tested; store + gate + release + reconcile + generator all green.
+
+**How to switch on** (ships OFF): set `cue.enabled:true` + `cue.goals:[…]`; leave
+`dry_run` default → the generator queues and the release loop LOGS
+`cue[dry-run]:` intended dispatches. When satisfied, set `dry_run:false` +
+a `max_per_hour`. Tune `per_session_cap`/`global_cap`/`max_spawns`/
+`completion_ttl_seconds` as needed.
+
+- **optional next:** surface the cue in the PWA (pending/inflight view); priority
+  decay / deadlines; per-source routing policy. All opt-in — see icebox.
 - **risks:** autonomous `Post`/`Spawn` acts on LIVE sessions unsupervised — a bad
   generator proposal or a re-push loop could spam/derail real work. Dedup +
   idempotency + caps are load-bearing, not optional.

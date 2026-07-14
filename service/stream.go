@@ -121,9 +121,13 @@ func notable(st source.Status) bool {
 	return st == source.StatusAwaitingUser || st == source.StatusBlocked || st == source.StatusFailed
 }
 
-// Start launches the background fleet watcher. Idempotent-safe to call once.
+// Start launches the background fleet watcher (and the cue generator, if any).
+// Call once.
 func (s *Server) Start() {
 	go s.watch(context.Background())
+	if s.cuegen != nil {
+		go s.cuegen.run(context.Background())
+	}
 }
 
 func (s *Server) watch(ctx context.Context) {

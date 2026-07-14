@@ -31,7 +31,8 @@ type Server struct {
 	sources   []source.Source
 	push      *pushHub
 	sse       *sseHub
-	cue       *cueRunner // nil unless Cue.Enabled + a durable store
+	cue       *cueRunner    // nil unless Cue.Enabled + a durable store
+	cuegen    *cueGenerator // nil unless Cue.Enabled + store + goals
 	sessionID string
 }
 
@@ -80,6 +81,11 @@ func New(cfg *config.Config) (*Server, error) {
 	// Outbound task scheduler (nil unless Cue.Enabled + Postgres). Drives off the
 	// fleet watcher; see cue.go and the cue package.
 	s.cue = newCueRunner(cfg.Cue, pg, sources, func(title, body string) { s.Notify(title, body) })
+	// The LLM generator that proposes tasks into the cue (nil unless enabled +
+	// store + goals). Guard on pg != nil so we never pass a typed-nil enqueuer.
+	if cfg.Cue.Enabled && pg != nil {
+		s.cuegen = newCueGenerator(configCueGen{Goals: cfg.Cue.Goals, GenInterval: cfg.Cue.GenInterval}, runner, pg, s.fleetStates)
+	}
 	return s, nil
 }
 
