@@ -92,10 +92,11 @@ type CueConfig struct {
 	DryRun      *bool `json:"dry_run"`              // log intended dispatches, don't act (default true)
 	GenInterval int   `json:"gen_interval_seconds"` // generator tick cadence (default 120)
 
-	PerSessionCap int `json:"per_session_cap"` // cue.Caps.PerSession (default 1)
-	GlobalCap     int `json:"global_cap"`      // cue.Caps.Global (0 = unlimited)
-	MaxSpawns     int `json:"max_spawns"`      // cue.Caps.MaxSpawns (0 = unlimited)
-	MaxPerHour    int `json:"max_per_hour"`    // hard rate cap on live dispatches (0 = unlimited)
+	PerSessionCap int `json:"per_session_cap"`         // cue.Caps.PerSession (default 1)
+	GlobalCap     int `json:"global_cap"`              // cue.Caps.Global (0 = unlimited)
+	MaxSpawns     int `json:"max_spawns"`              // cue.Caps.MaxSpawns (0 = unlimited)
+	MaxPerHour    int `json:"max_per_hour"`            // hard rate cap on live dispatches (0 = unlimited)
+	CompletionTTL int `json:"completion_ttl_seconds"` // reclaim an in-flight task after this long (default 1800)
 
 	Goals []string `json:"goals"` // standing goals the generator plans against (phase 4)
 }
@@ -167,6 +168,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Cue.PerSessionCap <= 0 {
 		c.Cue.PerSessionCap = 1
+	}
+	if c.Cue.CompletionTTL <= 0 {
+		c.Cue.CompletionTTL = 1800
 	}
 	// Secret env overrides.
 	if v := os.Getenv("YSCR_LLM_KEY"); v != "" {

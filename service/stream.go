@@ -145,7 +145,7 @@ func (s *Server) watch(ctx context.Context) {
 			states := s.fleetStates(ctx)
 			s.summ.observe(ctx, states) // throttled background digests
 			if s.cue != nil {
-				s.cue.release(ctx, states) // outbound task scheduler (gated by Cue.Enabled)
+				s.cue.tick(ctx, states) // reconcile completions + release new (gated by Cue.Enabled)
 			}
 			cur := make(map[string]snap, len(states))
 			changed := false

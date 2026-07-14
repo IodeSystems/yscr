@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/iodesystems/yscr/config"
 	"github.com/iodesystems/yscr/cue"
@@ -29,15 +30,36 @@ func TestNewCueRunner_Gate(t *testing.T) {
 }
 
 type fakeCueStore struct {
-	pending  []cue.Task
-	inflight []cue.Task
-	marked   []string
+	pending   []cue.Task
+	inflight  []cue.Task
+	rows      []store.InflightRow
+	marked    []string // ids MarkInflight'd
+	seenBusy  []string // ids MarkSeenBusy'd
+	done      []string // ids MarkDone'd
+	failed    []string // ids MarkFailed'd
+	lastRunID string   // run_session passed to the last MarkInflight
 }
 
-func (f *fakeCueStore) PendingTasks(context.Context) ([]cue.Task, error)  { return f.pending, nil }
-func (f *fakeCueStore) InflightTasks(context.Context) ([]cue.Task, error) { return f.inflight, nil }
-func (f *fakeCueStore) MarkInflight(_ context.Context, id string, _ int64) (bool, error) {
+func (f *fakeCueStore) PendingTasks(context.Context) ([]cue.Task, error)     { return f.pending, nil }
+func (f *fakeCueStore) InflightTasks(context.Context) ([]cue.Task, error)    { return f.inflight, nil }
+func (f *fakeCueStore) InflightRows(context.Context) ([]store.InflightRow, error) {
+	return f.rows, nil
+}
+func (f *fakeCueStore) MarkInflight(_ context.Context, id, runSession string, _ int64) (bool, error) {
 	f.marked = append(f.marked, id)
+	f.lastRunID = runSession
+	return true, nil
+}
+func (f *fakeCueStore) MarkSeenBusy(_ context.Context, id string) error {
+	f.seenBusy = append(f.seenBusy, id)
+	return nil
+}
+func (f *fakeCueStore) MarkDone(_ context.Context, id string, _ int64) (bool, error) {
+	f.done = append(f.done, id)
+	return true, nil
+}
+func (f *fakeCueStore) MarkFailed(_ context.Context, id string, _ int64) (bool, error) {
+	f.failed = append(f.failed, id)
 	return true, nil
 }
 
@@ -121,6 +143,71 @@ func TestCueRelease_SpawnLive(t *testing.T) {
 	}
 	if len(fs.marked) != 1 {
 		t.Fatalf("spawn should be marked inflight, got %v", fs.marked)
+	}
+	if fs.lastRunID != "spawned" {
+		t.Errorf("spawn must record the new session id as run_session, got %q", fs.lastRunID)
+	}
+}
+
+// ── reconcile (phase 3.5: completion detection) ─────────────────────
+
+func inflightRow(id, src, sess string, seenBusy bool, releasedAt int64) store.InflightRow {
+	return store.InflightRow{ID: id, Source: src, RunSession: sess, SeenBusy: seenBusy, ReleasedAt: releasedAt}
+}
+func statusState(src, id string, s source.Status) source.State {
+	return source.State{Ref: source.SessionRef{Source: src, ID: id}, Status: s}
+}
+func recRunner(fs *fakeCueStore, ttl time.Duration) *cueRunner {
+	return &cueRunner{store: fs, sources: map[string]source.Source{}, notify: func(string, string) {}, completionTTL: ttl}
+}
+
+func TestCueReconcile_LatchThenComplete(t *testing.T) {
+	fs := &fakeCueStore{rows: []store.InflightRow{inflightRow("t1", "cc", "s1", false, 0)}}
+	r := recRunner(fs, 0)
+	// Running + not-yet-latched → latch seen_busy, not done.
+	r.reconcile(context.Background(), []source.State{statusState("cc", "s1", source.StatusRunning)})
+	if len(fs.seenBusy) != 1 || len(fs.done) != 0 {
+		t.Fatalf("running should latch seen_busy only: seenBusy=%v done=%v", fs.seenBusy, fs.done)
+	}
+	// Latched + now free → done.
+	fs.rows[0].SeenBusy = true
+	r.reconcile(context.Background(), []source.State{statusState("cc", "s1", source.StatusIdle)})
+	if len(fs.done) != 1 || fs.done[0] != "t1" {
+		t.Fatalf("latched+free should complete: done=%v", fs.done)
+	}
+}
+
+func TestCueReconcile_Failed(t *testing.T) {
+	fs := &fakeCueStore{rows: []store.InflightRow{inflightRow("t1", "cc", "s1", true, 0)}}
+	recRunner(fs, 0).reconcile(context.Background(), []source.State{statusState("cc", "s1", source.StatusFailed)})
+	if len(fs.failed) != 1 {
+		t.Fatalf("failed session should MarkFailed: %v", fs.failed)
+	}
+}
+
+func TestCueReconcile_GoneAfterBusy(t *testing.T) {
+	fs := &fakeCueStore{rows: []store.InflightRow{inflightRow("t1", "cc", "s1", true, 0)}}
+	recRunner(fs, 0).reconcile(context.Background(), nil) // session absent from fleet
+	if len(fs.done) != 1 {
+		t.Fatalf("session gone after being busy should complete: %v", fs.done)
+	}
+}
+
+func TestCueReconcile_NotPickedUpHolds(t *testing.T) {
+	// Freshly dispatched, session still idle (not picked up), TTL far off → hold.
+	fs := &fakeCueStore{rows: []store.InflightRow{inflightRow("t1", "cc", "s1", false, time.Now().UnixNano())}}
+	recRunner(fs, time.Hour).reconcile(context.Background(), []source.State{statusState("cc", "s1", source.StatusIdle)})
+	if len(fs.done) != 0 || len(fs.failed) != 0 || len(fs.seenBusy) != 0 {
+		t.Fatalf("un-picked-up task must hold: done=%v failed=%v seenBusy=%v", fs.done, fs.failed, fs.seenBusy)
+	}
+}
+
+func TestCueReconcile_TTLBackstop(t *testing.T) {
+	old := time.Now().Add(-2 * time.Hour).UnixNano()
+	fs := &fakeCueStore{rows: []store.InflightRow{inflightRow("t1", "cc", "s1", false, old)}}
+	recRunner(fs, time.Hour).reconcile(context.Background(), []source.State{statusState("cc", "s1", source.StatusIdle)})
+	if len(fs.done) != 1 {
+		t.Fatalf("TTL backstop should reclaim a stuck task: done=%v", fs.done)
 	}
 }
 

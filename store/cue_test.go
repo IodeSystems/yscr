@@ -68,11 +68,11 @@ func TestCueStore_EnqueueDedupeLifecycle(t *testing.T) {
 		t.Errorf("pending order: got %s first, want cuetest-a (higher priority)", pending[0].ID)
 	}
 
-	// Release "a": pending → inflight (guarded).
-	if ok, err := pg.MarkInflight(ctx, "cuetest-a", 200); err != nil || !ok {
+	// Release "a": pending → inflight (guarded), recording the run session.
+	if ok, err := pg.MarkInflight(ctx, "cuetest-a", "s1", 200); err != nil || !ok {
 		t.Fatalf("MarkInflight: ok=%v err=%v", ok, err)
 	}
-	if ok, _ := pg.MarkInflight(ctx, "cuetest-a", 201); ok {
+	if ok, _ := pg.MarkInflight(ctx, "cuetest-a", "s1", 201); ok {
 		t.Error("double release should be a no-op")
 	}
 
@@ -83,6 +83,21 @@ func TestCueStore_EnqueueDedupeLifecycle(t *testing.T) {
 	counts := cue.Counts(inflight)
 	if counts["cc/s1"] != 1 {
 		t.Fatalf("inflight counts: got %v, want cc/s1=1", counts)
+	}
+
+	// Reconcile bookkeeping round-trips: run_session set, seen_busy latch works.
+	rows, err := pg.InflightRows(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].RunSession != "s1" || rows[0].SeenBusy {
+		t.Fatalf("inflight row: got %+v, want run_session=s1 seen_busy=false", rows[0])
+	}
+	if err := pg.MarkSeenBusy(ctx, "cuetest-a"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ = pg.InflightRows(ctx); !rows[0].SeenBusy {
+		t.Error("MarkSeenBusy should latch seen_busy")
 	}
 
 	// Now that "a" is inflight (not pending), a same-dedupe re-propose is still blocked.

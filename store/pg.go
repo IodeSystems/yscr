@@ -52,10 +52,15 @@ CREATE TABLE IF NOT EXISTS cue_tasks (
 	target_spawn   bool   NOT NULL DEFAULT false,
 	target_dir     text   NOT NULL DEFAULT '',
 	status         text   NOT NULL DEFAULT 'pending', -- pending | inflight | done | failed
+	run_session    text   NOT NULL DEFAULT '',        -- session the task actually runs in (spawned id for spawns)
+	seen_busy      bool   NOT NULL DEFAULT false,      -- reconciler latch: went busy after dispatch
 	created_at     bigint NOT NULL,
 	released_at    bigint NOT NULL DEFAULT 0,
 	done_at        bigint NOT NULL DEFAULT 0
 );
+-- Migrate existing deployments (phase 3.5 columns).
+ALTER TABLE cue_tasks ADD COLUMN IF NOT EXISTS run_session text NOT NULL DEFAULT '';
+ALTER TABLE cue_tasks ADD COLUMN IF NOT EXISTS seen_busy   bool NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS cue_pending ON cue_tasks (priority DESC, created_at) WHERE status='pending';
 -- One live task per dedupe identity: dedupe_key='' opts out (partial-index NULLs).
 CREATE UNIQUE INDEX IF NOT EXISTS cue_dedupe_live ON cue_tasks (dedupe_key)
@@ -227,10 +232,55 @@ func (p *PG) queryTasks(ctx context.Context, where string) ([]cue.Task, error) {
 	return out, rows.Err()
 }
 
-// MarkInflight transitions a pending task to inflight (on dispatch). Guarded on
-// the current status so a double-release is a no-op (returns false).
-func (p *PG) MarkInflight(ctx context.Context, id string, releasedAt int64) (bool, error) {
-	return p.setStatus(ctx, id, "inflight", "pending", "released_at", releasedAt)
+// MarkInflight transitions a pending task to inflight (on dispatch), recording
+// the session it actually runs in (the spawned id for spawns) so the reconciler
+// can track it. Guarded on the current status so a double-release is a no-op.
+func (p *PG) MarkInflight(ctx context.Context, id, runSession string, releasedAt int64) (bool, error) {
+	tag, err := p.pool.Exec(ctx,
+		`UPDATE cue_tasks SET status='inflight', run_session=$1, released_at=$2, seen_busy=false
+		 WHERE id=$3 AND status='pending'`,
+		runSession, releasedAt, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// InflightRow is an in-flight task with the bookkeeping the reconciler needs.
+type InflightRow struct {
+	ID         string
+	Source     string // target_source (also the run source)
+	RunSession string
+	Spawn      bool
+	SeenBusy   bool
+	ReleasedAt int64
+}
+
+// InflightRows returns released-not-done tasks for completion reconciliation.
+func (p *PG) InflightRows(ctx context.Context) ([]InflightRow, error) {
+	rows, err := p.pool.Query(ctx,
+		`SELECT id, target_source, run_session, target_spawn, seen_busy, released_at
+		 FROM cue_tasks WHERE status='inflight'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []InflightRow
+	for rows.Next() {
+		var r InflightRow
+		if err := rows.Scan(&r.ID, &r.Source, &r.RunSession, &r.Spawn, &r.SeenBusy, &r.ReleasedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// MarkSeenBusy latches that an in-flight task's session has been observed busy,
+// so a later return to a free status can be read as completion.
+func (p *PG) MarkSeenBusy(ctx context.Context, id string) error {
+	_, err := p.pool.Exec(ctx, `UPDATE cue_tasks SET seen_busy=true WHERE id=$1 AND status='inflight'`, id)
+	return err
 }
 
 // MarkDone / MarkFailed close out an inflight task.

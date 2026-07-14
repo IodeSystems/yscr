@@ -86,14 +86,26 @@ cadence) · release loop hooked into the existing fleet watcher (already polls
 4. ◻ Generator tick: LLM proposes tasks from fleet + `Cue.Goals` → `EnqueueTask`
    (DedupeKey blocks re-proposing live work).
 
-**Completion detection (phase 3.5, before sustained live use):** dispatched
-tasks stay `inflight` — nothing marks them `done` yet, so a per-session cap fills
-after the first dispatch. Need task→session linkage + `MarkDone` when the session
-reaches `StatusDone`. Safe under the default dry-run; **required before live.**
+3.5. ✅ Completion detection (`cueRunner.reconcile`, run before `release` each
+   tick via `tick`). A task completes once its dispatched session (tracked by
+   `run_session` — the spawned id for spawns) has been SEEN BUSY and then returns
+   to a free status (idle/done) or leaves the fleet; `failed`→MarkFailed; a
+   `completion_ttl_seconds` (default 1800) backstop reclaims capacity from a
+   session that never frees or a spawn that never appears. `seen_busy` latch +
+   `run_session` columns added to `cue_tasks` (ALTER … IF NOT EXISTS migrates
+   existing dbs). Store: `InflightRows`/`MarkSeenBusy`; `MarkInflight` now records
+   `run_session`. 5 reconcile tests + store round-trip green. **Live mode is now
+   sustainable** (capacity actually frees).
+   - Note: awaiting_user is treated as still-in-flight (not complete) for
+     reconcile — a session waiting on the user hasn't finished its task.
 
-- **next:** phase 4 (generator tick) and/or phase 3.5 (completion detection).
-  Cue ships OFF (`Cue.Enabled=false`); to trial: enable with `dry_run:true`,
-  watch the `cue[dry-run]:` logs, then set `dry_run:false` + a `max_per_hour`.
+4. ◻ Generator tick: LLM proposes tasks from fleet + `Cue.Goals` → `EnqueueTask`
+   (DedupeKey blocks re-proposing live work).
+
+- **next:** phase 4 (generator tick) — the last piece; the deterministic
+  release+reconcile core is done and live-safe. Cue still ships OFF
+  (`Cue.Enabled=false`); to trial: enable with `dry_run:true`, watch the
+  `cue[dry-run]:` logs, then `dry_run:false` + a `max_per_hour`.
 - **risks:** autonomous `Post`/`Spawn` acts on LIVE sessions unsupervised — a bad
   generator proposal or a re-push loop could spam/derail real work. Dedup +
   idempotency + caps are load-bearing, not optional.
