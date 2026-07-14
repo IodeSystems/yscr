@@ -144,6 +144,9 @@ func (s *Server) watch(ctx context.Context) {
 		case <-ticker.C:
 			states := s.fleetStates(ctx)
 			s.summ.observe(ctx, states) // throttled background digests
+			if s.cue != nil {
+				s.cue.release(ctx, states) // outbound task scheduler (gated by Cue.Enabled)
+			}
 			cur := make(map[string]snap, len(states))
 			changed := false
 			for _, st := range states {

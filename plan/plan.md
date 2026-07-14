@@ -75,15 +75,25 @@ cadence) · release loop hooked into the existing fleet watcher (already polls
    `config.CueConfig` (caps + rails; **safe defaults**: `enabled` off,
    `DryRunEnabled()` true when unset). DB-gated tests green vs yscr-pg
    (`store/cue_test.go`): dedupe/lifecycle + store→Plan round-trip.
-3. ◻ Release loop in the fleet watcher: `Plan` → execute RELEASE autonomously
-   (`Post`/`Spawn`) → `MarkInflight` → notify. **Needs rails (see blocking
-   decision); config fields already exist (Enabled/DryRun/MaxPerHour).**
+3. ✅ Release loop (`service/cue.go`, hooked into `watch` in `stream.go`).
+   `cueRunner.release(states)` each 12s tick: `PendingTasks` + `InflightTasks`
+   → `cue.Plan` → for each RELEASE, `dispatch` (`Post` existing / `Spawn` new)
+   → `MarkInflight` → `Notify`. **Rails wired:** `newCueRunner` returns nil
+   unless `Cue.Enabled` (kill-switch) + Postgres; `DryRun` (default on) logs
+   intended dispatches without acting; `MaxPerHour` sliding-window cap; caps via
+   `cue.Caps`. `cueStore` interface keeps the test DB-free. 6 tests green
+   (dry-run/live/held-status/spawn/hourly-cap/enable-gate).
 4. ◻ Generator tick: LLM proposes tasks from fleet + `Cue.Goals` → `EnqueueTask`
    (DedupeKey blocks re-proposing live work).
 
-- **next:** phase 3 — release loop in the fleet watcher. **Gated on the rails
-  decision** (kill-switch = `Cue.Enabled`; dry-run-first = `DryRunEnabled`;
-  hard caps = `MaxPerHour`/`MaxSpawns`). Confirm defaults before it acts live.
+**Completion detection (phase 3.5, before sustained live use):** dispatched
+tasks stay `inflight` — nothing marks them `done` yet, so a per-session cap fills
+after the first dispatch. Need task→session linkage + `MarkDone` when the session
+reaches `StatusDone`. Safe under the default dry-run; **required before live.**
+
+- **next:** phase 4 (generator tick) and/or phase 3.5 (completion detection).
+  Cue ships OFF (`Cue.Enabled=false`); to trial: enable with `dry_run:true`,
+  watch the `cue[dry-run]:` logs, then set `dry_run:false` + a `max_per_hour`.
 - **risks:** autonomous `Post`/`Spawn` acts on LIVE sessions unsupervised — a bad
   generator proposal or a re-push loop could spam/derail real work. Dedup +
   idempotency + caps are load-bearing, not optional.

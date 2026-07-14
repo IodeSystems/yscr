@@ -31,6 +31,7 @@ type Server struct {
 	sources   []source.Source
 	push      *pushHub
 	sse       *sseHub
+	cue       *cueRunner // nil unless Cue.Enabled + a durable store
 	sessionID string
 }
 
@@ -76,6 +77,9 @@ func New(cfg *config.Config) (*Server, error) {
 		sessionID: "primary",
 	}
 	s.summ = newSummarizer(runner, s.broadcastActivity, s.broadcastFleet)
+	// Outbound task scheduler (nil unless Cue.Enabled + Postgres). Drives off the
+	// fleet watcher; see cue.go and the cue package.
+	s.cue = newCueRunner(cfg.Cue, pg, sources, func(title, body string) { s.Notify(title, body) })
 	return s, nil
 }
 
