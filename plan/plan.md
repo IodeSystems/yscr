@@ -246,6 +246,18 @@ decisions + fleet/stream added; threads/messages/decisions/confirm pre-existing)
     config-file is the right altitude. Config parse tested; engine builds.
     **Deploy note**: the live backend (llm.iodesystems.com) runs its own oidio —
     bump `rule2_silence` there to take effect.
+- ✅ **serialized + coalescing per-session dispatch** (`concierge/queue.go`,
+  `concierge/concierge.go`) — fixes a real race: `Converse` had NO serialization,
+  so rapid voice utterances ran concurrent `Turn`s interleaving writes into the
+  shared `agent.Store`. Now each session has one worker goroutine; `Converse`
+  enqueues + waits. A turn coalesces everything queued at its start into ONE
+  merged turn ("append new work, re-evaluate"); all coalesced callers get that
+  turn's reply. Messages arriving mid-turn go to the NEXT turn (queue &
+  coalesce, not abort — no half-done source tool actions). Background ctx +
+  `turnTimeout` (5m) so one caller's cancel can't abort a shared turn and a
+  wedged turn can't jam the session. Tested under `-race`: A alone → B+C merged.
+  **Decision (user): server-side, queue-not-abort.** Client keeps its
+  append/delta-correct/700ms-wait UX unchanged (server is the authority).
 - **Known nuance:** agentkit persists tool RESULTS but not the assistant
   tool-CALL, so replaying a tool-heavy conversation yields orphan `tool`
   messages that can confuse the model (it claimed "no memory" after a

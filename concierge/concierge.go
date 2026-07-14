@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/iodesystems/agentkit/agent"
 	"github.com/iodesystems/agentkit/llm"
@@ -27,6 +28,12 @@ type Concierge struct {
 	store   agent.Store
 	runner  agent.LLMRunner
 	system  string
+
+	// Per-session serialized dispatch (see queue.go). Turns for one session never
+	// run concurrently, and messages that pile up during a turn coalesce into one
+	// follow-up turn.
+	qmu    sync.Mutex
+	queues map[string]*sessQueue
 }
 
 // New builds a concierge over a runner (the swappable LLM endpoint), a store
@@ -46,10 +53,34 @@ func New(runner agent.LLMRunner, st agent.Store, sources ...source.Source) *Conc
 // WithSystem overrides the system prompt.
 func (c *Concierge) WithSystem(s string) *Concierge { c.system = s; return c }
 
-// Converse feeds one user message into the membrane and returns the
-// concierge's spoken reply. The concierge may call source tools (fleet_status,
-// pull_detail, post, spawn) before replying.
+// Converse feeds one user message into the membrane and returns the concierge's
+// spoken reply. It enqueues onto the session's serialized dispatcher: the message
+// runs as its own turn if the session is idle, or is coalesced with other
+// messages that arrive during an in-flight turn into a single follow-up turn (all
+// coalesced callers get that turn's reply). This both fixes the shared-store race
+// from concurrent turns and gives the "append new work, re-evaluate" behavior.
+// The concierge may call source tools (fleet_status, pull_detail, post, spawn)
+// before replying.
 func (c *Concierge) Converse(ctx context.Context, sessionID, userMessage string) (string, error) {
+	q := c.queue(sessionID)
+	done := make(chan convRes, 1)
+	select {
+	case q.ch <- convReq{msg: userMessage, done: done}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	select {
+	case res := <-done:
+		return res.reply, res.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// runTurn injects one (possibly merged) user message and runs a single agent
+// turn. Only ever called by a session's worker goroutine — never concurrently
+// for the same session.
+func (c *Concierge) runTurn(ctx context.Context, sessionID, userMessage string) (string, error) {
 	sess := c.session(sessionID)
 	if err := sess.Inject(ctx, agent.Entry{Kind: agent.KindUser, Content: userMessage}); err != nil {
 		return "", err
