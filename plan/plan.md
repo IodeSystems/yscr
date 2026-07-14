@@ -43,6 +43,49 @@ until agentkit is go-gettable).
 
 ## Active work
 
+### ◻ Task cueing system — outbound scheduler (concierge → sessions)
+The mirror of the inbound coalescing dispatch: an outbound scheduler that manages
+the flow of work TO sessions given the fleet is "rarely truly idle" (so
+wait-for-idle isn't a viable gate). **Decisions (user, locked):**
+- **Task source = concierge-derived.** An LLM *generator* tick proposes candidate
+  tasks from fleet `source.State` + standing goals → the cue.
+- **Release policy = deterministic status + capacity gate.** No LLM in the hot
+  path: release a cued task to a session only when its `Status` permits
+  (idle/awaiting_user/done) AND it's under an in-flight cap; else HOLD.
+- **Autonomy = autonomous.** It `Post`s/`Spawn`s on its own and notifies after —
+  no confirm step.
+
+**Shape:** cue store (Postgres; survives restart) · generator tick (LLM, slow
+cadence) · release loop hooked into the existing fleet watcher (already polls
+`source.State` every 12s) · router (existing session via `Post` vs new via
+`Spawner`).
+
+**Phased build:**
+1. ✅ Cue data model + **deterministic release gate** (`cue/cue.go`: `Task`,
+   `Target`, `Caps`, `Plan`). Pure fn: (tasks, fleet snapshot, in-flight counts,
+   caps) → release/hold decisions, no side effects. Status gate (releasable set
+   defaults to idle/done/awaiting_user — capacity, not idleness, is what lets
+   work flow to active sessions) + per-session/global/spawn caps + priority
+   ordering. 6 tests green (`cue/cue_test.go`).
+2. ◻ Cue store (Postgres table, alongside `store/pg.go`) + config knobs
+   (gen interval, per-session + global in-flight caps, standing goals). Build
+   `inflight map[string]int` for `Plan` from released-not-done rows.
+3. ◻ Release loop in the fleet watcher: `Plan` → execute RELEASE autonomously
+   (`Post`/`Spawn`) → notify. **Needs rails (see blocking decision).**
+4. ◻ Generator tick: LLM proposes tasks from fleet + goals → cue (dedup on
+   `DedupeKey` vs in-flight/cued so it doesn't re-propose).
+
+- **next:** phase 2 — cue store + config knobs (feeds `Plan`'s inflight/caps).
+- **risks:** autonomous `Post`/`Spawn` acts on LIVE sessions unsupervised — a bad
+  generator proposal or a re-push loop could spam/derail real work. Dedup +
+  idempotency + caps are load-bearing, not optional.
+- **blocking decision (USER):** safety rails for autonomous action — (a) a global
+  kill-switch / pause, (b) a dry-run mode that logs intended dispatches without
+  acting (recommended for first live run), (c) hard caps (max dispatches/hour,
+  max spawns). Confirm these before phase 3 goes live.
+- **optional:** priority/deadlines on cued tasks; per-source routing policy.
+
+
 ### ✅ Slice 0 — the `source.Source` plugin contract
 - `source/source.go`: `SessionRef`, `State` (+ `Status`), `Event` (+
   `EventKind`), the capability split — `Source` (List/State/Observe/Post) +
