@@ -137,6 +137,7 @@ Rules:
 - Only propose work that is not already being done by a session.
 - Prefer routing a task to an existing session (set "source" and "session_id") when it is the natural place; otherwise spawn a new one (set "spawn": true, and "dir" if relevant).
 - Give each task a stable "dedupe_key" identifying the work, so the same task is not proposed twice.
+- "source" MUST be a bare plugin id exactly as shown in the fleet's "source=" field (e.g. "claude-code"), never "source/id". "session_id" is the fleet's "id=" value.
 - If nothing new is warranted right now, return an empty list.
 Output STRICT JSON only, no prose:
 {"tasks":[{"prompt":"...","source":"...","session_id":"...","spawn":false,"dir":"","priority":0,"dedupe_key":"..."}]}`
@@ -147,7 +148,7 @@ func (g *cueGenerator) prompt(states []source.State) string {
 	for _, goal := range g.goals {
 		fmt.Fprintf(&b, "- %s\n", goal)
 	}
-	b.WriteString("\nFleet (source/id [status] title — summary):\n")
+	b.WriteString("\nFleet — each line gives the fields to copy into a task verbatim:\n")
 	if len(states) == 0 {
 		b.WriteString("(no live sessions)\n")
 	}
@@ -156,7 +157,8 @@ func (g *cueGenerator) prompt(states []source.State) string {
 		if title == "" {
 			title = st.Ref.ID
 		}
-		fmt.Fprintf(&b, "- %s/%s [%s] %s — %s\n", st.Ref.Source, st.Ref.ID, st.Status, title, oneLine(st.Summary))
+		fmt.Fprintf(&b, "- source=%q id=%q status=%q title=%q — %s\n",
+			st.Ref.Source, st.Ref.ID, st.Status, title, oneLine(st.Summary))
 	}
 	return b.String()
 }
