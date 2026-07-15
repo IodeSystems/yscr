@@ -138,7 +138,9 @@ func Load(path string) (*Config, error) {
 		c.LLM.BaseURL = "http://192.168.1.76:8111"
 	}
 	if c.LLM.Model == "" {
-		c.LLM.Model = "Qwen3-6-27B-MPT" // corrallm model ids are case-sensitive
+		// The corrallm "chat" lane: Qwen3-6-27B-MPT with fallback to gemma-4-12b
+		// under contention (a bare model name would pin it, no fallback).
+		c.LLM.Model = "chat"
 	}
 	if len(c.ClaudeCode.Command) == 0 {
 		c.ClaudeCode.Command = []string{"claude"}
