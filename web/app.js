@@ -87,12 +87,98 @@ async function loadFleet() {
           ${pending}
         </div>
         <div class="summary">${escape(s.Summary || "")}</div>`;
+      // Tap a card to open its detail sheet.
+      card.setAttribute("role", "button");
+      card.tabIndex = 0;
+      card.addEventListener("click", () => openDetail(s));
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(s); }
+      });
       box.append(card);
     }
   } catch (e) {
     box.innerHTML = `<div class="empty">fleet unavailable (${e.message})</div>`;
   }
 }
+
+// ── project detail sheet ────────────────────────────────────────────
+// A bottom sheet showing everything in a session's fleet State — source, dir,
+// status, blockers, and its pending questionnaires — from the data /api/fleet
+// already returns (no extra fetch). Opened on card tap.
+
+let detailOpen = false;
+
+function relTime(ns) {
+  if (!ns) return "";
+  const d = Date.now() - ns / 1e6;
+  if (d < 1000) return "just now";
+  const s = Math.floor(d / 1000);
+  if (s < 60) return s + "s ago";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h ago";
+  return Math.floor(h / 24) + "d ago";
+}
+
+function drow(label, valueHTML) {
+  return valueHTML ? `<div class="drow"><span class="dlabel">${label}</span><span class="dval">${valueHTML}</span></div>` : "";
+}
+
+function openDetail(s) {
+  const ref = s.Ref || {};
+  const blockers = s.Blockers || [];
+  const pend = s.Pending || [];
+
+  let html = `<div class="detail-top"><span class="dot ${s.Status}"></span><h2>${escape(ref.Title || ref.ID || "session")}</h2></div>`;
+  html += drow("Source", escape(ref.Source || ""));
+  html += drow("Status", `<span class="pill ${s.Status}">${escape(s.Status || "unknown")}</span>`);
+  if (ref.Dir) html += drow("Directory", `<code>${escape(ref.Dir)}</code>`);
+  if (ref.ID) html += drow("Session", `<code>${escape(ref.ID)}</code>`);
+  if (s.UpdatedAt) html += drow("Updated", escape(relTime(s.UpdatedAt)));
+
+  if (s.Summary) html += `<div class="dsection"><span class="dlabel">Summary</span><p class="dsummary">${escape(s.Summary)}</p></div>`;
+
+  if (blockers.length) {
+    html += `<div class="dsection"><span class="dlabel">Blockers</span><ul class="dblockers">` +
+      blockers.map((b) => `<li>${escape(b)}</li>`).join("") + `</ul></div>`;
+  }
+
+  if (pend.length) {
+    html += `<div class="dsection"><span class="dlabel">Awaiting you (${pend.length})</span>`;
+    for (const q of pend) {
+      html += `<div class="dq"><div class="dq-title">${escape(q.Title || "Question")}</div>`;
+      if (q.Intro) html += `<div class="dq-intro">${escape(q.Intro)}</div>`;
+      for (const f of q.Fields || []) {
+        html += `<div class="dq-field">${escape(f.Prompt || f.Key || "")}`;
+        const opts = f.Options || [];
+        if (opts.length) {
+          html += `<div class="dq-opts">` + opts.map((o) => `<span class="dq-opt">${escape(o.Label || o.Value)}</span>`).join("") + `</div>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+    }
+    html += `<div class="dq-note">Answer these in the Questions section below.</div></div>`;
+  }
+
+  $("#detail-body").innerHTML = html;
+  $("#detail").hidden = false;
+  detailOpen = true;
+}
+
+function closeDetail() {
+  $("#detail").hidden = true;
+  detailOpen = false;
+}
+
+// Dismiss: tap the dimmed backdrop (not the sheet) or press Escape.
+$("#detail").addEventListener("click", (e) => {
+  if (e.target === $("#detail")) closeDetail();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && detailOpen) closeDetail();
+});
 
 // ── questions awaiting the user ─────────────────────────────────────
 // Visual half of the concierge's question handling: any session with a pending
