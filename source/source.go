@@ -16,7 +16,14 @@
 // spawn/act optional keeps a read-only source (e.g. a status-only feed) valid.
 package source
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrUnsupported is returned by an optional capability a source/adapter doesn't
+// implement (e.g. a stateless adapter's Spawn or Act).
+var ErrUnsupported = errors.New("source: unsupported operation")
 
 // SessionRef identifies one session within a source.
 type SessionRef struct {
@@ -79,10 +86,10 @@ const (
 // Field is one question. Options is set for choice/multi (e.g. a decision's
 // apply/dismiss/escalate/break_out becomes a choice Field).
 type Field struct {
-	Key      string    // the Answer.Values key
-	Prompt   string    // the question, as authored
+	Key      string // the Answer.Values key
+	Prompt   string // the question, as authored
 	Type     FieldType
-	Options  []Option  // for choice/multi
+	Options  []Option // for choice/multi
 	Required bool
 	Help     string
 }
@@ -169,4 +176,18 @@ type Action struct {
 type Actor interface {
 	Source
 	Act(ctx context.Context, id string, action Action) (string, error)
+}
+
+// Historian is the optional capability to read a session's recent message
+// history — the conversation the State digest deliberately can't carry (State
+// is a one-line rollup). Sources with a durable transcript (claude-code's
+// JSONL, openai's conversation store) implement it; the concierge exposes it as
+// the read_history tool so it can answer "what has this session been doing?"
+// without the user dropping into the terminal.
+type Historian interface {
+	Source
+	// History returns up to the last n conversational turns for a session,
+	// projected to compact width-invariant text (no ANSI, no tool-result
+	// bodies, no chain-of-thought), oldest→newest. n <= 0 means a sane default.
+	History(ctx context.Context, id string, n int) (string, error)
 }

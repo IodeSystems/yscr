@@ -24,7 +24,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/iodesystems/yscr/config"
-	"github.com/iodesystems/yscr/plugins/claudecode"
+	"github.com/iodesystems/yscr/plugins/pane/claude"
 	"github.com/iodesystems/yscr/service"
 )
 
@@ -85,7 +85,7 @@ func runPanes(argv []string) {
 	if err != nil {
 		log.Fatalf("yscr panes: load config: %v", err)
 	}
-	cc := claudecode.New(claudecode.Config{Command: cfg.ClaudeCode.Command})
+	cc := claude.New(claude.Config{Command: cfg.ClaudeCode.Command})
 	panes := cc.Panes(context.Background())
 	if len(panes) == 0 {
 		fmt.Println("no live Claude sessions found")

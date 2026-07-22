@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/iodesystems/yscr/plugins/claudecode"
+	"github.com/iodesystems/yscr/plugins/pane/claude"
 )
 
 // runHookQuestion is the `yscr hook-question` PreToolUse hook body: it reads the
@@ -27,7 +27,7 @@ func runHookQuestion() {
 	if json.Unmarshal(b, &pl) != nil || pl.SessionID == "" {
 		return
 	}
-	dir := claudecode.DefaultPendingDir()
+	dir := claude.DefaultPendingDir()
 	if os.MkdirAll(dir, 0o755) != nil {
 		return
 	}

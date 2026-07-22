@@ -43,6 +43,23 @@ until agentkit is go-gettable).
 
 ## Active work
 
+### ✅ Pluggable pane source — generic tmux source + program adapters
+`plugins/claudecode` → `plugins/pane` (generic Source shell: tmux plumbing +
+pid↔tty↔pane join + pane scan/classify) parameterized by a program **Adapter**
+(`Adapter{ID, Handles, Discover, State, History, Post, Spawn, Act}` + a `Tmux`
+plumbing interface). claude is the first adapter (`plugins/pane/claude`); a new
+program = a new Adapter, no new tmux/source code. `NewSet` builds one Source per
+adapter over a shared driver, so `SessionRef.Source` stays `claude-code` and the
+concierge's per-source routing is unchanged. Live-pane adoption for stateless
+programs is the optional `Adopter` seam (empty today). Tests migrated (fake
+`pane.Tmux` for adapter logic; fake exec for the join/scan); whole suite +
+`read_history` verified live. Wiring flipped (`service/service.go`,
+`cmd/yscr/main.go`, `cmd/yscr/hooks.go`); old package deleted.
+- **deferred (next slices):** generic `alt=0` log adapter via `pipe-pane`
+  (`Adopter`); history depth — tool-call aggregation ("read a dozen files") +
+  JSONL watermark for incremental reads; `send()` paste-buffer fix (multi-line
+  post submits early — mechanism confirmed earlier, not yet applied).
+
 ### ◻ Task cueing system — outbound scheduler (concierge → sessions)
 The mirror of the inbound coalescing dispatch: an outbound scheduler that manages
 the flow of work TO sessions given the fleet is "rarely truly idle" (so

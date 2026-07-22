@@ -115,7 +115,9 @@ func objSchema(props map[string]any, required ...string) map[string]any {
 	}
 	return s
 }
-func strProp(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
+func strProp(desc string) map[string]any {
+	return map[string]any{"type": "string", "description": desc}
+}
 
 func toolDef(name, desc string, params map[string]any) llm.ToolDef {
 	var td llm.ToolDef
@@ -131,6 +133,11 @@ var conciergeTools = []llm.ToolDef{
 	toolDef("pull_detail", "Get the detailed rollup for one session (status, blockers, and any questionnaires awaiting the user).", objSchema(map[string]any{
 		"source": strProp("the source id, e.g. autowork"),
 		"id":     strProp("the session id within that source"),
+	}, "source", "id")),
+	toolDef("read_history", "Read the recent conversation of one session — what it and the user have actually been saying, beyond the one-line status. Use when the user asks what a session has been doing, or before posting so you have context. Not every source supports this.", objSchema(map[string]any{
+		"source": strProp("the source id, e.g. claude-code"),
+		"id":     strProp("the session id within that source"),
+		"limit":  map[string]any{"type": "integer", "description": "max recent turns to return (default 12)"},
 	}, "source", "id")),
 	toolDef("post", "Send a message into a session on the user's behalf.", objSchema(map[string]any{
 		"source":  strProp("the source id"),
@@ -165,6 +172,24 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 		return c.fleetStatus(ctx), nil
 	case "pull_detail":
 		return c.pullDetail(ctx, str("source"), str("id")), nil
+	case "read_history":
+		src, ok := c.sources[str("source")]
+		if !ok {
+			return unknownSource(str("source")), nil
+		}
+		h, ok := src.(source.Historian)
+		if !ok {
+			return fmt.Sprintf("source %q has no readable history.", str("source")), nil
+		}
+		limit := 0
+		if n, ok := args["limit"].(float64); ok {
+			limit = int(n)
+		}
+		hist, err := h.History(ctx, str("id"), limit)
+		if err != nil {
+			return fmt.Sprintf("read_history failed: %v", err), nil
+		}
+		return hist, nil
 	case "post":
 		src, ok := c.sources[str("source")]
 		if !ok {

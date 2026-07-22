@@ -15,8 +15,9 @@ import (
 	"github.com/iodesystems/yscr/concierge"
 	"github.com/iodesystems/yscr/config"
 	"github.com/iodesystems/yscr/plugins/autowork"
-	"github.com/iodesystems/yscr/plugins/claudecode"
 	"github.com/iodesystems/yscr/plugins/openai"
+	"github.com/iodesystems/yscr/plugins/pane"
+	"github.com/iodesystems/yscr/plugins/pane/claude"
 	"github.com/iodesystems/yscr/source"
 	"github.com/iodesystems/yscr/store"
 	"github.com/iodesystems/yscr/web"
@@ -61,7 +62,8 @@ func New(cfg *config.Config) (*Server, error) {
 		sources = append(sources, openai.New(runner, store.NewMem(), ""))
 	}
 	if cfg.ClaudeCode.Enabled {
-		sources = append(sources, claudecode.New(claudecode.Config{Command: cfg.ClaudeCode.Command}))
+		sources = append(sources, pane.NewSet(pane.Config{},
+			claude.New(claude.Config{Command: cfg.ClaudeCode.Command}))...)
 	}
 
 	ph, err := newPushHub(cfg, pg)
