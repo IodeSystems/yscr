@@ -75,10 +75,20 @@ programs is the optional `Adopter` seam (empty today). Tests migrated (fake
   stops on sheet close. Backend tested (+race); verified live in the browser
   (lines streamed as generated). Note: interactive shells are noisy (echoes,
   prompt redraws); clean for non-interactive output.
-- **deferred (next slices):** history depth — tool-call aggregation ("read a
-  dozen files") + JSONL watermark; `send()` paste-buffer fix (multi-line post
-  submits early — mechanism confirmed earlier, not yet applied); a claude
-  Streamer (tail the JSONL) for symmetric live narration.
+- ✅ **concierge narration** (`service/narrate.go`). `POST/DELETE
+  /api/narrate/{source}/{id}` consume the same `Observe` stream, buffer lines,
+  and each `narrateInterval` (8s) feed the delta to the LLM with a conversational
+  spoken-narration prompt (convey magnitude, don't recite) → `narration` SSE
+  event. PWA: "🔊 Narrate" toggle (ambient — persists across sheet close, unlike
+  Watch); narration renders as a dashed/italic concierge bubble + spoken via TTS
+  when speak-mode is on. Backend tested (+race); verified live — the local LLM
+  narrated a real `go vet`/`ls` run conversationally ("Vet passed cleanly, and
+  I'm now inspecting the file structure…").
+- **deferred (next slices):** ambient auto-narration of active sessions (vs
+  today's per-session trigger) + push delivery for phone/not-looking; history
+  depth — tool-call aggregation ("read a dozen files") + JSONL watermark;
+  `send()` paste-buffer fix; a claude Streamer (tail the JSONL) so claude
+  sessions narrate too (today only terminal panes stream).
 
 ### ◻ Task cueing system — outbound scheduler (concierge → sessions)
 The mirror of the inbound coalescing dispatch: an outbound scheduler that manages

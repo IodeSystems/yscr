@@ -170,10 +170,11 @@ function openDetail(s) {
   }
 
   // Live output tail (pipe-pane stream for terminal panes; a one-shot summary
-  // for sources without a live stream, e.g. claude-code).
+  // for sources without a live stream, e.g. claude-code) + spoken narration.
   if (ref.Source && ref.ID) {
     html += `<div class="dsection">
       <button id="watch-btn" class="watch-btn">▶ Watch output</button>
+      <button id="narrate-btn" class="watch-btn">🔊 Narrate</button>
       <pre id="tail-out" class="tail-out" hidden></pre>
     </div>`;
   }
@@ -182,7 +183,10 @@ function openDetail(s) {
 
   const wb = $("#watch-btn");
   if (wb) wb.addEventListener("click", () => toggleWatch(ref.Source, ref.ID));
+  const nb = $("#narrate-btn");
+  if (nb) nb.addEventListener("click", () => toggleNarrate(ref.Source, ref.ID));
   syncWatchUI();
+  syncNarrateUI(ref.Source, ref.ID);
 
   $("#detail").hidden = false;
   detailOpen = true;
@@ -240,6 +244,36 @@ function appendTail(line) {
   const lines = out.textContent.split("\n");
   if (lines.length > TAIL_MAX) out.textContent = lines.slice(-TAIL_MAX).join("\n");
   out.scrollTop = out.scrollHeight;
+}
+
+// ── spoken narration (ambient; persists across sheet open/close) ─────
+const narrating = new Set(); // "source/id" keys currently narrating
+
+async function toggleNarrate(source, id) {
+  const key = source + "/" + id;
+  const on = narrating.has(key);
+  try {
+    const r = await fetch(`/api/narrate/${encodeURIComponent(source)}/${encodeURIComponent(id)}`, {
+      method: on ? "DELETE" : "POST",
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || `HTTP ${r.status}`);
+    }
+    if (on) narrating.delete(key);
+    else narrating.add(key);
+    syncNarrateUI(source, id);
+  } catch (e) {
+    toast("Narrate failed", e.message);
+  }
+}
+
+function syncNarrateUI(source, id) {
+  const nb = $("#narrate-btn");
+  if (!nb) return;
+  const on = narrating.has(source + "/" + id);
+  nb.textContent = on ? "🔊 Stop narrating" : "🔊 Narrate";
+  nb.classList.toggle("on", on);
 }
 
 function closeDetail() {
@@ -910,6 +944,13 @@ function connectStream() {
     try {
       const d = JSON.parse(e.data);
       if (watching && d.source === watching.source && d.id === watching.id) appendTail("— stream ended —");
+    } catch (_) {}
+  });
+  es.addEventListener("narration", (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      bubble(`${d.title ? d.title + ": " : ""}${d.text}`, "yscr narration");
+      if (speakOn && !userSpeaking()) speak(d.text);
     } catch (_) {}
   });
   es.onerror = () => {}; // EventSource auto-reconnects

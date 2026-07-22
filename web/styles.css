@@ -98,6 +98,7 @@ header h1 { font-size: 18px; margin: 0; letter-spacing: .08em; }
 .msg.you { background: var(--accent); color: #04121f; margin-left: auto; }
 .msg.you.voice::before { content: "🎤"; margin-right: 6px; opacity: .6; font-size: 12px; }
 .msg.yscr { background: var(--panel); border: 1px solid var(--line); }
+.msg.narration { border-style: dashed; color: var(--muted); font-style: italic; }
 .msg.err { background: #2a1414; border: 1px solid var(--bad); color: var(--bad); }
 
 #composer { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
@@ -194,7 +195,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .dq-title { font-weight: 600; font-size: 14px; }
 .dq-intro { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .dq-field { font-size: 13px; margin-top: 6px; }
-.watch-btn { font-size: 13px; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+.watch-btn { font-size: 13px; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; margin-right: 8px; }
 .watch-btn.on { color: var(--accent); border-color: var(--accent); }
 .tail-out { margin-top: 8px; max-height: 40vh; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
 .dq-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }

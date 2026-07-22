@@ -26,17 +26,19 @@ import (
 
 // Server is the running yscr service.
 type Server struct {
-	cfg       *config.Config
-	runner    agent.LLMRunner
-	conc      *concierge.Concierge
-	summ      *summarizer
-	sources   []source.Source
-	push      *pushHub
-	sse       *sseHub
-	tails     *watchHub
-	cue       *cueRunner    // nil unless Cue.Enabled + a durable store
-	cuegen    *cueGenerator // nil unless Cue.Enabled + store + goals
-	sessionID string
+	cfg        *config.Config
+	runner     agent.LLMRunner
+	conc       *concierge.Concierge
+	summ       *summarizer
+	sources    []source.Source
+	push       *pushHub
+	sse        *sseHub
+	tails      *watchHub
+	narr       *narrator
+	narrations *narrateHub
+	cue        *cueRunner    // nil unless Cue.Enabled + a durable store
+	cuegen     *cueGenerator // nil unless Cue.Enabled + store + goals
+	sessionID  string
 }
 
 // New builds the service: the concierge on the configured LLM endpoint, the
@@ -76,14 +78,16 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		cfg:       cfg,
-		runner:    runner,
-		conc:      concierge.New(runner, convStore, sources...),
-		sources:   sources,
-		push:      ph,
-		sse:       newSSEHub(),
-		tails:     newWatchHub(),
-		sessionID: "primary",
+		cfg:        cfg,
+		runner:     runner,
+		conc:       concierge.New(runner, convStore, sources...),
+		sources:    sources,
+		push:       ph,
+		sse:        newSSEHub(),
+		tails:      newWatchHub(),
+		narr:       newNarrator(runner),
+		narrations: newNarrateHub(),
+		sessionID:  "primary",
 	}
 	s.summ = newSummarizer(runner, s.broadcastActivity, s.broadcastFleet)
 	// Outbound task scheduler (nil unless Cue.Enabled + Postgres). Drives off the
@@ -126,6 +130,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stream", s.serveStream)
 	mux.HandleFunc("POST /api/watch/{source}/{id}", s.handleWatch)
 	mux.HandleFunc("DELETE /api/watch/{source}/{id}", s.handleUnwatch)
+	mux.HandleFunc("POST /api/narrate/{source}/{id}", s.handleNarrate)
+	mux.HandleFunc("DELETE /api/narrate/{source}/{id}", s.handleUnnarrate)
 	mux.HandleFunc("POST /api/push/subscribe", s.handleSubscribe)
 	mux.HandleFunc("POST /api/push/test", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"sent": s.Notify("YSCR", "Test notification — you're subscribed.")})
