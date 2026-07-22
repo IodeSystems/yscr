@@ -68,6 +68,15 @@ type Adapter interface {
 	Act(ctx context.Context, s Session, action source.Action, t Tmux) (string, error)
 }
 
+// Streamer is the optional capability to stream a session's output as live
+// events until ctx is cancelled — the continuous alternative to the one-shot
+// Observe summary. The terminal adapter streams pane output via tmux pipe-pane;
+// a stateful adapter could tail its transcript instead. Source.Observe delegates
+// here when the adapter implements it.
+type Streamer interface {
+	Stream(ctx context.Context, s Session, t Tmux) (<-chan source.Event, error)
+}
+
 // Adopter is the optional capability to materialize a Session from a live pane
 // the adapter Handles but does NOT persist — a stateless program (a shell, a
 // build, a log tail). Stateful adapters (claude) enumerate via Discover instead
@@ -104,4 +113,9 @@ type Tmux interface {
 	// returning the tmux target to drive it (the window name; Target's has-session
 	// finds it thereafter, so no separate tracking is needed).
 	Launch(ctx context.Context, s Session, dir string, argv []string) (target string, err error)
+	// Pipe streams a pane's raw output (tmux pipe-pane) as byte chunks until the
+	// returned stop func is called or ctx is cancelled. Chunks are raw terminal
+	// bytes (may contain ANSI); the adapter projects them. stop ends the pipe and
+	// releases resources; it is safe to call once.
+	Pipe(ctx context.Context, target string) (<-chan []byte, func(), error)
 }

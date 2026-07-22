@@ -50,6 +50,12 @@ func (f *fakeTmux) Launch(_ context.Context, s pane.Session, dir string, argv []
 	return name, nil
 }
 
+func (f *fakeTmux) Pipe(context.Context, string) (<-chan []byte, func(), error) {
+	ch := make(chan []byte)
+	close(ch)
+	return ch, func() {}, nil
+}
+
 func (f *fakeTmux) sawSeq(sub ...string) bool {
 	for _, c := range f.calls {
 		joined := " " + strings.Join(c, " ") + " "

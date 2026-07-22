@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // tmuxDriver is the concrete Tmux the source lends adapters. It centralizes the
@@ -17,7 +19,14 @@ type tmuxDriver struct {
 	// exec runs a command → combined output. Seam for tests.
 	exec  func(ctx context.Context, name string, args ...string) (string, error)
 	ttyOf func(pid int) string // live pid → controlling tty ("" if dead); seam
+	// pollInterval is how often Pipe reads new bytes from the pipe file. Seam for
+	// tests (tighten it); 0 → pipePollDefault.
+	pollInterval time.Duration
 }
+
+// pipePollDefault: the pipe file accumulates every byte, so this bounds latency,
+// not completeness.
+const pipePollDefault = 250 * time.Millisecond
 
 func newTmux(bin, prefix string) *tmuxDriver {
 	if bin == "" {
@@ -59,6 +68,79 @@ func (d *tmuxDriver) Scrollback(ctx context.Context, target string, n int) (stri
 func (d *tmuxDriver) SendKeys(ctx context.Context, target string, keys ...string) error {
 	_, err := d.run(ctx, append([]string{"send-keys", "-t", target}, keys...)...)
 	return err
+}
+
+// Pipe streams a pane's raw output via `tmux pipe-pane 'cat >> tmpfile'`, then
+// tails the file with an offset watermark. The file accumulates every byte, so
+// nothing is lost between polls — the cadence only bounds latency. stop() ends
+// the pipe (bare pipe-pane toggles it off), stops the tailer, and removes the
+// file; it is safe to call once (the returned func guards re-entry via ctx).
+func (d *tmuxDriver) Pipe(ctx context.Context, target string) (<-chan []byte, func(), error) {
+	f, err := os.CreateTemp("", "yscr-pipe-*.raw")
+	if err != nil {
+		return nil, nil, err
+	}
+	path := f.Name()
+	_ = f.Close()
+	// Start the pipe. tmux runs the command via /bin/sh; the temp path is safe
+	// (no spaces/metachars from CreateTemp).
+	if _, err := d.run(ctx, "pipe-pane", "-t", target, "cat >> "+path); err != nil {
+		_ = os.Remove(path)
+		return nil, nil, err
+	}
+
+	out := make(chan []byte)
+	ctx, cancel := context.WithCancel(ctx)
+	var once sync.Once
+	stop := func() { once.Do(cancel) }
+
+	poll := d.pollInterval
+	if poll <= 0 {
+		poll = pipePollDefault
+	}
+	go func() {
+		defer close(out)
+		defer func() {
+			// Toggle the pipe off (background ctx: the passed ctx is cancelled) and
+			// clean up the temp file.
+			_, _ = d.exec(context.Background(), d.bin, "pipe-pane", "-t", target)
+			_ = os.Remove(path)
+		}()
+		rf, err := os.Open(path)
+		if err != nil {
+			return
+		}
+		defer rf.Close()
+		ticker := time.NewTicker(poll)
+		defer ticker.Stop()
+		buf := make([]byte, 32*1024)
+		drain := func() bool {
+			for {
+				n, _ := rf.Read(buf)
+				if n == 0 {
+					return true
+				}
+				chunk := append([]byte(nil), buf[:n]...)
+				select {
+				case out <- chunk:
+				case <-ctx.Done():
+					return false
+				}
+			}
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				drain() // final flush of whatever landed before stop
+				return
+			case <-ticker.C:
+				if !drain() {
+					return
+				}
+			}
+		}
+	}()
+	return out, stop, nil
 }
 
 func (d *tmuxDriver) Launch(ctx context.Context, s Session, dir string, argv []string) (string, error) {

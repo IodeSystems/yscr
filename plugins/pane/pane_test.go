@@ -3,8 +3,10 @@ package pane
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iodesystems/yscr/source"
 )
@@ -41,6 +43,16 @@ type adoptStub struct{ *stubAdapter }
 
 func (a adoptStub) Adopt(p LivePane) (Session, bool) {
 	return Session{Source: a.id, ID: "adopted-" + p.Target, Program: p.Program, Pid: p.Pid}, true
+}
+
+// streamStub adds the Streamer capability, emitting one canned event.
+type streamStub struct{ *stubAdapter }
+
+func (s streamStub) Stream(_ context.Context, ss Session, _ Tmux) (<-chan source.Event, error) {
+	ch := make(chan source.Event, 1)
+	ch <- source.Event{Ref: source.SessionRef{Source: s.id, ID: ss.ID}, Content: "stream:" + ss.ID}
+	close(ch)
+	return ch, nil
 }
 
 func newFakeSource(ad Adapter, fake func(ctx context.Context, name string, args ...string) (string, error)) *Source {
@@ -133,6 +145,30 @@ func TestSource_Observe(t *testing.T) {
 	}
 }
 
+// Observe delegates to a Streamer adapter when present (live feed), else falls
+// back to the one-shot summary.
+func TestSource_ObserveStreamsWhenStreamer(t *testing.T) {
+	ad := streamStub{&stubAdapter{id: "terminal", handles: "fish", discover: []Session{{ID: "a"}}}}
+	s := newFakeSource(ad, func(context.Context, string, ...string) (string, error) { return "", nil })
+	ch, err := s.Observe(context.Background(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := <-ch
+	if ev.Content != "stream:a" {
+		t.Errorf("want streamed event; got %+v", ev)
+	}
+}
+
+func TestSource_ObserveFallsBackToSummary(t *testing.T) {
+	ad := &stubAdapter{id: "claude-code", handles: "claude", discover: []Session{{ID: "a"}}}
+	s := newFakeSource(ad, func(context.Context, string, ...string) (string, error) { return "", nil })
+	ch, _ := s.Observe(context.Background(), "a")
+	if ev := <-ch; ev.Content != "sum:a" {
+		t.Errorf("non-streamer should fall back to summary; got %+v", ev)
+	}
+}
+
 // ── tmux plumbing: pid↔tty↔pane join + scan ─────────────────────────
 
 func TestTmux_TargetJoinsOwnPane(t *testing.T) {
@@ -182,6 +218,51 @@ func TestTmux_Scan(t *testing.T) {
 	}
 	if panes[1].Target != "%2" || panes[1].TTY != "/dev/pts/2" {
 		t.Errorf("pane[1] = %+v", panes[1])
+	}
+}
+
+// Pipe issues pipe-pane with a cat>>file command, streams the file's bytes, and
+// on stop toggles the pipe off (bare pipe-pane) and removes the file.
+func TestTmux_Pipe(t *testing.T) {
+	d := newTmux("tmux", "yscr-cc")
+	d.pollInterval = 5 * time.Millisecond
+	var pipeFile string
+	var toggledOff bool
+	d.exec = func(_ context.Context, _ string, args ...string) (string, error) {
+		if args[0] == "pipe-pane" {
+			if len(args) == 4 && strings.HasPrefix(args[3], "cat >> ") { // pipe-pane -t %1 'cat >> f'
+				pipeFile = strings.TrimPrefix(args[3], "cat >> ")
+				_ = os.WriteFile(pipeFile, []byte("hello\nworld\n"), 0o644)
+			} else if len(args) == 3 { // bare pipe-pane -t %1 → toggle off
+				toggledOff = true
+			}
+		}
+		return "", nil
+	}
+	ch, stop, err := d.Pipe(context.Background(), "%1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	done := make(chan struct{})
+	go func() {
+		for c := range ch {
+			got = append(got, c...)
+			if len(got) >= len("hello\nworld\n") {
+				stop()
+			}
+		}
+		close(done)
+	}()
+	<-done
+	if string(got) != "hello\nworld\n" {
+		t.Errorf("piped bytes = %q", got)
+	}
+	if !toggledOff {
+		t.Error("stop() should toggle pipe-pane off")
+	}
+	if _, err := os.Stat(pipeFile); !os.IsNotExist(err) {
+		t.Error("pipe temp file should be removed on stop")
 	}
 }
 

@@ -157,9 +157,17 @@ func (s *Source) Act(ctx context.Context, id string, action source.Action) (stri
 	return s.ad.Act(ctx, ss, action, s.tmux)
 }
 
-// Observe emits the session's current summary once, then closes — matching the
-// prior one-shot behavior. A streaming Observe is a later slice.
+// Observe streams a session's output. When the adapter is a Streamer (terminal:
+// pipe-pane) it delegates for a live feed until ctx is cancelled; otherwise it
+// falls back to emitting the current summary once, then closing.
 func (s *Source) Observe(ctx context.Context, id string) (<-chan source.Event, error) {
+	ss, ok := s.find(ctx, id)
+	if !ok {
+		ss = Session{ID: id, Source: s.ID()}
+	}
+	if streamer, ok := s.ad.(Streamer); ok {
+		return streamer.Stream(ctx, ss, s.tmux)
+	}
 	ch := make(chan source.Event, 1)
 	st, err := s.State(ctx, id)
 	if err == nil && st.Summary != "" {

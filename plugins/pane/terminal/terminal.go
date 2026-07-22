@@ -12,7 +12,9 @@
 package terminal
 
 import (
+	"bytes"
 	"context"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,8 +28,9 @@ func nowNS() int64 { return time.Now().UnixNano() }
 const SourceID = "terminal"
 
 var (
-	_ pane.Adapter = (*Adapter)(nil)
-	_ pane.Adopter = (*Adapter)(nil)
+	_ pane.Adapter  = (*Adapter)(nil)
+	_ pane.Adopter  = (*Adapter)(nil)
+	_ pane.Streamer = (*Adapter)(nil)
 )
 
 // shells are the programs treated as "idle at a prompt" rather than running work.
@@ -117,6 +120,72 @@ func (a *Adapter) Post(ctx context.Context, s pane.Session, message string, t pa
 		return err
 	}
 	return t.SendKeys(ctx, tgt, "Enter")
+}
+
+// Stream tails the pane's live output via pipe-pane, emitting one progress event
+// per completed line (ANSI stripped, blank lines dropped). It runs until ctx is
+// cancelled or the pane closes. This is the live-narration counterpart to the
+// on-demand History snapshot.
+func (a *Adapter) Stream(ctx context.Context, s pane.Session, t pane.Tmux) (<-chan source.Event, error) {
+	ref := source.SessionRef{Source: SourceID, ID: s.ID, Title: s.Name, Dir: s.Cwd}
+	tgt, live := t.Target(ctx, s)
+	if !live {
+		ch := make(chan source.Event)
+		close(ch)
+		return ch, nil
+	}
+	raw, stop, err := t.Pipe(ctx, tgt)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan source.Event)
+	go func() {
+		defer close(out)
+		defer stop()
+		emit := func(line string) {
+			line = strings.TrimRight(stripANSI(line), " \t\r")
+			if strings.TrimSpace(line) == "" {
+				return
+			}
+			select {
+			case out <- source.Event{Ref: ref, Kind: source.EventProgress, Content: line, At: a.now()}:
+			case <-ctx.Done():
+			}
+		}
+		var buf []byte
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case chunk, ok := <-raw:
+				if !ok { // pipe closed — flush a trailing partial line
+					if len(buf) > 0 {
+						emit(string(buf))
+					}
+					return
+				}
+				buf = append(buf, chunk...)
+				for {
+					i := bytes.IndexByte(buf, '\n')
+					if i < 0 {
+						break
+					}
+					emit(string(buf[:i]))
+					buf = buf[i+1:]
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
+// ansiRe strips the common terminal escape sequences (CSI, OSC, and lone
+// two-byte escapes) so streamed lines are plain text.
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]|\x1b\\][^\x07\x1b]*(\x07|\x1b\\\\)|\x1b[@-Z\\\\-_]")
+
+func stripANSI(s string) string {
+	s = ansiRe.ReplaceAllString(s, "")
+	return strings.ReplaceAll(s, "\r", "")
 }
 
 // Spawn is unsupported — starting new work is claude's job, not a terminal's.

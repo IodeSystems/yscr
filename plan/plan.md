@@ -63,10 +63,20 @@ programs is the optional `Adopter` seam (empty today). Tests migrated (fake
   `Tmux.Scrollback`, `LivePane.Alt` (via `#{alternate_on}`), and `Tmux` on
   `Adapter.History`. Verified live: concierge `read_history` read a real shell's
   scrollback through the same tool.
-- **deferred (next slices):** streaming pane watcher via `pipe-pane` (live digest
-  vs on-demand snapshot); history depth — tool-call aggregation ("read a dozen
-  files") + JSONL watermark; `send()` paste-buffer fix (multi-line post submits
-  early — mechanism confirmed earlier, not yet applied).
+- ✅ **pipe-pane streaming capability** (`Tmux.Pipe` + `Streamer` seam +
+  `terminal.Stream`). `Source.Observe` now delegates to a `Streamer` adapter
+  (live per-line feed via `pipe-pane`, ANSI-stripped) or falls back to the
+  one-shot summary. `Tmux.Pipe` tails a pipe-pane temp file with an offset
+  watermark (cadence bounds latency, not completeness). Tested (unit + -race);
+  raw pipe-pane verified live. **Open decision (user): the service consumer.**
+  Nothing calls `Observe` yet — the watcher polls `fleetStates` every 12s. Where
+  the stream goes (SSE live-tail vs feed the concierge narration) is unwired.
+  Note: piping an interactive shell is noisy (keystroke echoes, prompt redraws);
+  cleanest on non-interactive output (builds, logs, a running command).
+- **deferred (next slices):** history depth — tool-call aggregation ("read a
+  dozen files") + JSONL watermark; `send()` paste-buffer fix (multi-line post
+  submits early — mechanism confirmed earlier, not yet applied); a claude
+  Streamer (tail the JSONL) for symmetric live narration.
 
 ### ◻ Task cueing system — outbound scheduler (concierge → sessions)
 The mirror of the inbound coalescing dispatch: an outbound scheduler that manages

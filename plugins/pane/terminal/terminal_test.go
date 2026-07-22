@@ -17,6 +17,8 @@ type fakeTmux struct {
 	live       map[string]string
 	capture    string
 	scrollback string
+	pipeCh     chan []byte // fed by the test; Pipe returns it
+	stopped    bool
 }
 
 func (f *fakeTmux) Target(_ context.Context, s pane.Session) (string, bool) {
@@ -35,6 +37,12 @@ func (f *fakeTmux) SendKeys(_ context.Context, target string, keys ...string) er
 }
 func (f *fakeTmux) Launch(context.Context, pane.Session, string, []string) (string, error) {
 	return "", nil
+}
+func (f *fakeTmux) Pipe(context.Context, string) (<-chan []byte, func(), error) {
+	if f.pipeCh == nil {
+		f.pipeCh = make(chan []byte)
+	}
+	return f.pipeCh, func() { f.stopped = true }, nil
 }
 
 func newT() *Adapter {
@@ -131,6 +139,58 @@ func TestPost_SendsToLivePane(t *testing.T) {
 	}
 	if !sent || !enter {
 		t.Errorf("want message + Enter to work:1.0; calls = %v", f.calls)
+	}
+}
+
+// Stream splits pipe-pane bytes into per-line events, strips ANSI, drops blanks,
+// and flushes a trailing partial line when the pipe closes.
+func TestStream_ProjectsLines(t *testing.T) {
+	a := newT()
+	f := &fakeTmux{live: map[string]string{"%2": "work:1.0"}, pipeCh: make(chan []byte, 4)}
+	ch, err := a.Stream(context.Background(), pane.Session{Source: SourceID, ID: "%2"}, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two complete lines (one with ANSI colour + a \r), a blank line, then a
+	// trailing partial that only completes when the pipe closes.
+	f.pipeCh <- []byte("\x1b[32mgo build\x1b[0m ok\r\n\n")
+	f.pipeCh <- []byte("tests ")
+	f.pipeCh <- []byte("passed\n")
+	close(f.pipeCh)
+
+	var got []string
+	for ev := range ch {
+		got = append(got, ev.Content)
+	}
+	want := []string{"go build ok", "tests passed"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("stream events = %v; want %v", got, want)
+	}
+	if !f.stopped {
+		t.Error("stop() should have been called when the stream ended")
+	}
+}
+
+// Stream on a dead pane returns an immediately-closed channel (nothing to tail).
+func TestStream_DeadPaneCloses(t *testing.T) {
+	a := newT()
+	ch, err := a.Stream(context.Background(), pane.Session{ID: "%9"}, &fakeTmux{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := <-ch; ok {
+		t.Error("dead-pane stream should be an empty closed channel")
+	}
+}
+
+// Cancelling ctx ends the stream even mid-flow.
+func TestStream_CtxCancelEnds(t *testing.T) {
+	a := newT()
+	f := &fakeTmux{live: map[string]string{"%2": "work:1.0"}, pipeCh: make(chan []byte)}
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, _ := a.Stream(ctx, pane.Session{ID: "%2"}, f)
+	cancel()
+	for range ch { // drains to close without blocking
 	}
 }
 
