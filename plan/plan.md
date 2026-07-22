@@ -50,9 +50,17 @@ throwaway session and implemented it. **Verified protocol:** single-select digit
 selects + auto-advances; multi-select digit toggles then **Tab** advances;
 lands on Review → **"1"** submits. Lone single-select still auto-submits on its
 digit (unchanged). Needs the hook payload (all questions structured); the
-pane-parse fallback stays read-only. Unit tested (all-single / mixed / lone
-regressions / missing-answer); verified end-to-end via `POST /api/answer` on a
-live throwaway prompt (Env=Production + Notify=[Email,SMS] submitted correctly).
+pane-parse fallback stays read-only.
+- **post-submit verification** (`endsOnReview`/`reviewStillOpen`): after a
+  review-ending answer, Act re-captures and errors if "Submit answers"/"Ready to
+  submit" is still up — catches any keystroke interception (an "n to add notes"
+  affordance or a changed selector) instead of falsely claiming success. ("n to
+  add notes" is an optional affordance — pressing n is a no-op in normal prompts,
+  and it doesn't shift the digit numbering; the verification is the safety net.)
+- Unit tested (all-single / mixed / lone regressions / missing-answer / stalled-
+  submit detection). Verified end-to-end via `POST /api/answer` on a live
+  throwaway 3-question mixed prompt (Env=Production, Region=EU, Notify=[Email,SMS]
+  all submitted correctly; API returned success = verification passed).
 
 ### ✅ Pluggable pane source — generic tmux source + program adapters
 `plugins/claudecode` → `plugins/pane` (generic Source shell: tmux plumbing +

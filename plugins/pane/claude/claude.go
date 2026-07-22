@@ -659,7 +659,38 @@ func (a *Adapter) Act(ctx context.Context, s pane.Session, action source.Action,
 		}
 		a.sleep(answerKeyDelay)
 	}
+	// Verify the submit registered. Prompts that end on a Review tab (multi-
+	// question, or any multi-select) show "Submit answers"/"Ready to submit"; if
+	// that's still on screen after we sent the submit key, a keystroke was
+	// intercepted — an "n to add notes" affordance or a changed selector — and the
+	// answer did NOT go through. Report it instead of falsely claiming success.
+	if endsOnReview(*q) {
+		a.sleep(submitSettleDelay)
+		if after, _ := t.Capture(ctx, tgt); reviewStillOpen(after) {
+			return "", fmt.Errorf("claude-code: submit didn't complete for %q — the review screen is still up (a notes prompt or changed selector may have intercepted a key); answer it in the pane", q.ID)
+		}
+	}
 	return fmt.Sprintf("answered %q", q.ID), nil
+}
+
+// submitSettleDelay lets Claude accept the answer + redraw before we verify it.
+const submitSettleDelay = 600 * time.Millisecond
+
+// endsOnReview reports whether answering q lands on the Review/Submit tab (so a
+// post-submit verification is meaningful) — a multi-question prompt or any
+// multi-select. A lone single-select submits directly with no review.
+func endsOnReview(q source.Questionnaire) bool {
+	if len(q.Fields) > 1 {
+		return true
+	}
+	return len(q.Fields) == 1 && q.Fields[0].Type == source.FieldMulti
+}
+
+// reviewStillOpen detects the AskUserQuestion Review tab lingering after a submit
+// — its markers are unambiguous (they appear nowhere else), so this won't false-
+// positive on a fresh follow-up question.
+func reviewStillOpen(pane string) bool {
+	return strings.Contains(pane, "Submit answers") || strings.Contains(pane, "Ready to submit")
 }
 
 // keystrokesFor maps a validated Answer to the sequence of send-keys arg tails

@@ -664,6 +664,80 @@ func TestKeystrokes_SingleQuestionUnchanged(t *testing.T) {
 	}
 }
 
+func TestReviewVerification_Predicates(t *testing.T) {
+	two := source.Questionnaire{Fields: []source.Field{{Type: source.FieldChoice}, {Type: source.FieldChoice}}}
+	loneSingle := source.Questionnaire{Fields: []source.Field{{Type: source.FieldChoice}}}
+	loneMulti := source.Questionnaire{Fields: []source.Field{{Type: source.FieldMulti}}}
+	if !endsOnReview(two) || !endsOnReview(loneMulti) {
+		t.Error("multi-question and lone multi-select end on a Review tab")
+	}
+	if endsOnReview(loneSingle) {
+		t.Error("a lone single-select submits directly — no Review")
+	}
+	if !reviewStillOpen("...\nReady to submit your answers?\n 1. Submit answers") {
+		t.Error("should detect a lingering Review tab")
+	}
+	if reviewStillOpen("just a shell\n❯ ") || reviewStillOpen("✔ Submit  →\nPick toppings") {
+		t.Error("false positive: neither is the Review tab")
+	}
+}
+
+// Two-question hook payload for the Act verification tests.
+const hook2QJSON = `{
+  "session_id":"sess-A","tool_use_id":"toolu_2Q","transcript_path":"%s",
+  "tool_input":{"questions":[
+    {"question":"Env?","header":"Env","multiSelect":false,"options":[{"label":"Staging"},{"label":"Production"}]},
+    {"question":"Notify?","header":"Notify","multiSelect":true,"options":[{"label":"Email"},{"label":"Slack"}]}
+  ]}
+}`
+
+// Act sends the multi-question keystrokes and, seeing the Review tab GONE
+// afterward, reports success.
+func TestAct_MultiQuestionSucceeds(t *testing.T) {
+	a := newAdapter(fakeHome(t))
+	// After submit the pane is a normal prompt (no Review markers).
+	f := &fakeTmux{live: map[string]string{"sess-A": "work:2.1"}, capture: "❯ \n done"}
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tp, []byte(`{}`+"\n"), 0o644)
+	withHook(t, a, "sess-A", fmt.Sprintf(hook2QJSON, tp))
+	res, err := a.Act(context.Background(), sessA(), source.Action{
+		Name: "answer_questionnaire",
+		Args: map[string]any{"answers": map[string]any{"Env": "Production", "Notify": []any{"Email"}}},
+	}, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res == "" {
+		t.Error("empty result")
+	}
+	// Env=Production(2, advances), Notify Email=1 toggle + Tab, then Submit=1.
+	for _, want := range [][]string{{"-l", "2"}, {"-l", "1"}, {"Tab"}, {"-l", "1"}} {
+		if !f.sawSeq(append([]string{"send-keys", "-t", "work:2.1"}, want...)...) {
+			t.Errorf("missing keystroke %v in %v", want, f.calls)
+		}
+	}
+}
+
+// If the Review tab is STILL up after submit (a notes prompt intercepted a key),
+// Act reports failure rather than falsely claiming success.
+func TestAct_MultiQuestionSubmitStalled(t *testing.T) {
+	a := newAdapter(fakeHome(t))
+	f := &fakeTmux{live: map[string]string{"sess-A": "work:2.1"}, capture: "Ready to submit your answers?\n❯ 1. Submit answers\n  2. Cancel"}
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tp, []byte(`{}`+"\n"), 0o644)
+	withHook(t, a, "sess-A", fmt.Sprintf(hook2QJSON, tp))
+	_, err := a.Act(context.Background(), sessA(), source.Action{
+		Name: "answer_questionnaire",
+		Args: map[string]any{"answers": map[string]any{"Env": "Staging", "Notify": []any{"Email"}}},
+	}, f)
+	if err == nil {
+		t.Fatal("want error when the Review tab is still up after submit")
+	}
+	if !strings.Contains(err.Error(), "submit didn't complete") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestKeystrokes_MissingAnswerErrors(t *testing.T) {
 	q := source.Questionnaire{Fields: []source.Field{
 		{Key: "Color", Type: source.FieldChoice, Options: []source.Option{{Value: "Red"}}},
