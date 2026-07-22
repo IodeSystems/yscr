@@ -18,6 +18,7 @@ import (
 	"github.com/iodesystems/yscr/plugins/openai"
 	"github.com/iodesystems/yscr/plugins/pane"
 	"github.com/iodesystems/yscr/plugins/pane/claude"
+	"github.com/iodesystems/yscr/plugins/pane/terminal"
 	"github.com/iodesystems/yscr/source"
 	"github.com/iodesystems/yscr/store"
 	"github.com/iodesystems/yscr/web"
@@ -62,8 +63,11 @@ func New(cfg *config.Config) (*Server, error) {
 		sources = append(sources, openai.New(runner, store.NewMem(), ""))
 	}
 	if cfg.ClaudeCode.Enabled {
-		sources = append(sources, pane.NewSet(pane.Config{},
-			claude.New(claude.Config{Command: cfg.ClaudeCode.Command}))...)
+		adapters := []pane.Adapter{claude.New(claude.Config{Command: cfg.ClaudeCode.Command})}
+		if cfg.ClaudeCode.TerminalPanes {
+			adapters = append(adapters, terminal.New(terminal.Config{}))
+		}
+		sources = append(sources, pane.NewSet(pane.Config{}, adapters...)...)
 	}
 
 	ph, err := newPushHub(cfg, pg)

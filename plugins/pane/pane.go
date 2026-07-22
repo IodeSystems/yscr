@@ -130,7 +130,7 @@ func (s *Source) History(ctx context.Context, id string, n int) (string, error) 
 	if !ok {
 		ss = Session{ID: id, Source: s.ID()}
 	}
-	return s.ad.History(ctx, ss, n)
+	return s.ad.History(ctx, ss, n, s.tmux)
 }
 
 func (s *Source) Post(ctx context.Context, id, message string) error {

@@ -35,6 +35,10 @@ func (f *fakeTmux) Capture(_ context.Context, _ string) (string, error) {
 	return "pane line one\npane line two", nil
 }
 
+func (f *fakeTmux) Scrollback(_ context.Context, _ string, _ int) (string, error) {
+	return f.capture, nil
+}
+
 func (f *fakeTmux) SendKeys(_ context.Context, target string, keys ...string) error {
 	f.calls = append(f.calls, append([]string{"send-keys", "-t", target}, keys...))
 	return nil
@@ -207,7 +211,7 @@ func TestState_RunningFromRecentTranscript(t *testing.T) {
 
 func TestHistory_ProjectsAndDropsBulk(t *testing.T) {
 	a := newAdapter(fakeHome(t))
-	got, err := a.History(context.Background(), sessA(), 0)
+	got, err := a.History(context.Background(), sessA(), 0, &fakeTmux{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +233,7 @@ func TestHistory_ProjectsAndDropsBulk(t *testing.T) {
 
 func TestHistory_LimitKeepsMostRecent(t *testing.T) {
 	a := newAdapter(fakeHome(t))
-	got, err := a.History(context.Background(), sessA(), 2)
+	got, err := a.History(context.Background(), sessA(), 2, &fakeTmux{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +245,7 @@ func TestHistory_LimitKeepsMostRecent(t *testing.T) {
 
 func TestHistory_UnknownSession(t *testing.T) {
 	a := newAdapter(fakeHome(t))
-	if _, err := a.History(context.Background(), pane.Session{ID: "nope"}, 0); err == nil {
+	if _, err := a.History(context.Background(), pane.Session{ID: "nope"}, 0, &fakeTmux{}); err == nil {
 		t.Fatal("want error for unknown session")
 	}
 }

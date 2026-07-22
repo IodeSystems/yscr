@@ -297,7 +297,8 @@ const activeWindowNS = int64(3 * time.Minute)
 // ── History ─────────────────────────────────────────────────────────
 
 // History projects the JSONL transcript to compact width-invariant turn lines.
-func (a *Adapter) History(_ context.Context, s pane.Session, n int) (string, error) {
+// The Tmux handle is unused — claude's history is the file, not the pane.
+func (a *Adapter) History(_ context.Context, s pane.Session, n int, _ pane.Tmux) (string, error) {
 	if n <= 0 {
 		n = 12
 	}

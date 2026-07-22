@@ -25,7 +25,7 @@ func (s *stubAdapter) Discover(context.Context) []Session { return s.discover }
 func (s *stubAdapter) State(_ context.Context, ss Session, _ Tmux) (source.State, error) {
 	return source.State{Ref: source.SessionRef{Source: s.id, ID: ss.ID}, Summary: "sum:" + ss.ID}, nil
 }
-func (s *stubAdapter) History(_ context.Context, ss Session, _ int) (string, error) {
+func (s *stubAdapter) History(_ context.Context, ss Session, _ int, _ Tmux) (string, error) {
 	return "hist:" + ss.ID, nil
 }
 func (s *stubAdapter) Post(context.Context, Session, string, Tmux) error { return nil }
@@ -76,9 +76,9 @@ func TestSource_AdoptsLivePanes(t *testing.T) {
 		{ID: "known", Pid: 1001, UpdatedAt: 50}, // already covers pid 1001
 	}}
 	ad := adoptStub{base}
-	scan := "%1\t1001\tfish\t/dev/pts/1\n" + // pid 1001 → covered, skip
-		"%2\t2002\tfish\t/dev/pts/2\n" + // fish, uncovered → adopt
-		"%3\t3003\tvim\t/dev/pts/3\n" // not handled → ignore
+	scan := "%1\t1001\tfish\t/dev/pts/1\t0\n" + // pid 1001 → covered, skip
+		"%2\t2002\tfish\t/dev/pts/2\t0\n" + // fish, uncovered → adopt
+		"%3\t3003\tvim\t/dev/pts/3\t1\n" // not handled → ignore
 	s := newFakeSource(ad, func(_ context.Context, _ string, args ...string) (string, error) {
 		if args[0] == "list-panes" {
 			return scan, nil
@@ -172,7 +172,7 @@ func TestTmux_Scan(t *testing.T) {
 	d := newTmux("tmux", "yscr-cc")
 	d.exec = func(_ context.Context, _ string, args ...string) (string, error) {
 		if args[0] == "list-panes" {
-			return "%1\t1001\tclaude\t/dev/pts/1\n%2\t2002\tfish\t/dev/pts/2\n", nil
+			return "%1\t1001\tclaude\t/dev/pts/1\t1\n%2\t2002\tfish\t/dev/pts/2\t0\n", nil
 		}
 		return "", nil
 	}

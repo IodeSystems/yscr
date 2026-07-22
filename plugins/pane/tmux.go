@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -46,6 +47,13 @@ func (d *tmuxDriver) windowName(sid string) string { return d.prefix + "-" + sid
 
 func (d *tmuxDriver) Capture(ctx context.Context, target string) (string, error) {
 	return d.run(ctx, "capture-pane", "-t", target, "-p")
+}
+
+func (d *tmuxDriver) Scrollback(ctx context.Context, target string, n int) (string, error) {
+	if n <= 0 {
+		n = 40
+	}
+	return d.run(ctx, "capture-pane", "-t", target, "-p", "-S", "-"+strconv.Itoa(n))
 }
 
 func (d *tmuxDriver) SendKeys(ctx context.Context, target string, keys ...string) error {
@@ -116,17 +124,17 @@ func (d *tmuxDriver) paneByTTY(ctx context.Context) map[string]string {
 // The source routes each by Program to an adapter (LivePane defined in adapter.go).
 func (d *tmuxDriver) scan(ctx context.Context) []LivePane {
 	out, err := d.run(ctx, "list-panes", "-a", "-F",
-		"#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_tty}")
+		"#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_tty}\t#{alternate_on}")
 	if err != nil {
 		return nil
 	}
 	var panes []LivePane
 	for _, ln := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		f := strings.SplitN(ln, "\t", 4)
-		if len(f) != 4 {
+		f := strings.SplitN(ln, "\t", 5)
+		if len(f) != 5 {
 			continue
 		}
-		panes = append(panes, LivePane{Target: f[0], Pid: atoi(f[1]), Program: f[2], TTY: f[3]})
+		panes = append(panes, LivePane{Target: f[0], Pid: atoi(f[1]), Program: f[2], TTY: f[3], Alt: f[4] == "1"})
 	}
 	return panes
 }

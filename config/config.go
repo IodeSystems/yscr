@@ -63,6 +63,10 @@ type AutoworkConfig struct {
 type ClaudeCodeConfig struct {
 	Enabled bool     `json:"enabled"`
 	Command []string `json:"command"` // default ["claude"]
+	// TerminalPanes also registers the generic terminal adapter — it adopts every
+	// non-claude, normal-screen (alt=0) tmux pane (shells, builds, log tails) into
+	// the fleet. Off by default: it can flood the fleet with every open shell.
+	TerminalPanes bool `json:"terminal_panes"`
 }
 
 type AudioConfig struct {

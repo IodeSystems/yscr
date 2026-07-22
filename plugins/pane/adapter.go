@@ -51,8 +51,9 @@ type Adapter interface {
 	State(ctx context.Context, s Session, t Tmux) (source.State, error)
 
 	// History projects a session's recent conversation/output to compact
-	// width-invariant text (claude: the JSONL transcript). n<=0 → adapter default.
-	History(ctx context.Context, s Session, n int) (string, error)
+	// width-invariant text — claude reads its JSONL transcript (ignores tmux); a
+	// terminal reads pane scrollback via tmux. n<=0 → adapter default.
+	History(ctx context.Context, s Session, n int, t Tmux) (string, error)
 
 	// Post injects a user message into a session, resuming it if dormant. `tmux`
 	// carries the launch/send plumbing.
@@ -77,10 +78,11 @@ type Adopter interface {
 
 // LivePane is one live tmux pane from a full scan, handed to Adopter.Adopt.
 type LivePane struct {
-	Target  string // session:window.pane
+	Target  string // pane id (%N) — stable for the pane's lifetime
 	Pid     int
 	Program string // pane_current_command
 	TTY     string
+	Alt     bool // on the alternate screen (a full-screen TUI: vim, htop, claude)
 }
 
 // Tmux is the pane-I/O plumbing the source lends adapters. It hides the exec
@@ -90,8 +92,12 @@ type Tmux interface {
 	// (our own tracked window → the user's own pane via pid↔tty↔pane join → not
 	// live). Returns a usable name even when not live.
 	Target(ctx context.Context, s Session) (target string, live bool)
-	// Capture returns the rendered pane text (capture-pane -p).
+	// Capture returns the rendered pane viewport text (capture-pane -p).
 	Capture(ctx context.Context, target string) (string, error)
+	// Scrollback returns up to the last n lines of a pane's scrollback + viewport
+	// (capture-pane -p -S -n). Meaningful only on the normal screen (an alt-screen
+	// TUI has no scrollback); the terminal adapter gates on LivePane.Alt.
+	Scrollback(ctx context.Context, target string, n int) (string, error)
 	// SendKeys sends one send-keys invocation (arg tail after "-t target").
 	SendKeys(ctx context.Context, target string, keys ...string) error
 	// Launch starts a detached tmux window for session s in `dir` running argv,

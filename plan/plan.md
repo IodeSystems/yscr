@@ -55,10 +55,18 @@ programs is the optional `Adopter` seam (empty today). Tests migrated (fake
 `pane.Tmux` for adapter logic; fake exec for the join/scan); whole suite +
 `read_history` verified live. Wiring flipped (`service/service.go`,
 `cmd/yscr/main.go`, `cmd/yscr/hooks.go`); old package deleted.
-- **deferred (next slices):** generic `alt=0` log adapter via `pipe-pane`
-  (`Adopter`); history depth — tool-call aggregation ("read a dozen files") +
-  JSONL watermark for incremental reads; `send()` paste-buffer fix (multi-line
-  post submits early — mechanism confirmed earlier, not yet applied).
+- ✅ **terminal adapter** (`plugins/pane/terminal`) — the second adapter, proving
+  the seam: stateless (no Discover), adopts live `alt=0` panes via `Adopter`,
+  history from pane scrollback (`capture-pane -S`) not a file, Spawn/Act
+  unsupported. Declines alt-screen TUIs (no scrollback, captures input). Gated by
+  `claude_code.terminal_panes` (default off — adopts every shell). Interface grew
+  `Tmux.Scrollback`, `LivePane.Alt` (via `#{alternate_on}`), and `Tmux` on
+  `Adapter.History`. Verified live: concierge `read_history` read a real shell's
+  scrollback through the same tool.
+- **deferred (next slices):** streaming pane watcher via `pipe-pane` (live digest
+  vs on-demand snapshot); history depth — tool-call aggregation ("read a dozen
+  files") + JSONL watermark; `send()` paste-buffer fix (multi-line post submits
+  early — mechanism confirmed earlier, not yet applied).
 
 ### ◻ Task cueing system — outbound scheduler (concierge → sessions)
 The mirror of the inbound coalescing dispatch: an outbound scheduler that manages
