@@ -151,9 +151,9 @@ func TestStream_ProjectsLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Two complete lines (one with ANSI colour + a \r), a blank line, then a
-	// trailing partial that only completes when the pipe closes.
-	f.pipeCh <- []byte("\x1b[32mgo build\x1b[0m ok\r\n\n")
+	// Two complete lines (one with ANSI colour, a \r, and a stray SI control
+	// char), a blank line, then a trailing partial that completes on close.
+	f.pipeCh <- []byte("\x1b[32mgo build\x1b[0m\x0f ok\r\n\n")
 	f.pipeCh <- []byte("tests ")
 	f.pipeCh <- []byte("passed\n")
 	close(f.pipeCh)

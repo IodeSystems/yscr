@@ -64,15 +64,17 @@ programs is the optional `Adopter` seam (empty today). Tests migrated (fake
   `Adapter.History`. Verified live: concierge `read_history` read a real shell's
   scrollback through the same tool.
 - ✅ **pipe-pane streaming capability** (`Tmux.Pipe` + `Streamer` seam +
-  `terminal.Stream`). `Source.Observe` now delegates to a `Streamer` adapter
-  (live per-line feed via `pipe-pane`, ANSI-stripped) or falls back to the
+  `terminal.Stream`). `Source.Observe` delegates to a `Streamer` adapter (live
+  per-line feed via `pipe-pane`, ANSI + C0-control stripped) or falls back to the
   one-shot summary. `Tmux.Pipe` tails a pipe-pane temp file with an offset
-  watermark (cadence bounds latency, not completeness). Tested (unit + -race);
-  raw pipe-pane verified live. **Open decision (user): the service consumer.**
-  Nothing calls `Observe` yet — the watcher polls `fleetStates` every 12s. Where
-  the stream goes (SSE live-tail vs feed the concierge narration) is unwired.
-  Note: piping an interactive shell is noisy (keystroke echoes, prompt redraws);
-  cleanest on non-interactive output (builds, logs, a running command).
+  watermark (cadence bounds latency, not completeness). Tested (unit + -race).
+- ✅ **SSE live-tail consumer** (user-chosen). `POST/DELETE /api/watch/{source}/{id}`
+  (`service/watch.go`) bridges `Observe` → SSE `tail`/`tail-end` events; one tail
+  per session, idempotent, stop on unwatch/close/pane-exit. PWA: "▶ Watch output"
+  in the detail sheet → live monospace tail panel (500-line cap, autoscroll),
+  stops on sheet close. Backend tested (+race); verified live in the browser
+  (lines streamed as generated). Note: interactive shells are noisy (echoes,
+  prompt redraws); clean for non-interactive output.
 - **deferred (next slices):** history depth — tool-call aggregation ("read a
   dozen files") + JSONL watermark; `send()` paste-buffer fix (multi-line post
   submits early — mechanism confirmed earlier, not yet applied); a claude

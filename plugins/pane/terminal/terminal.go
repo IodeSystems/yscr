@@ -185,7 +185,16 @@ var ansiRe = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]|\x1b\\][^\x07\x1b]*(
 
 func stripANSI(s string) string {
 	s = ansiRe.ReplaceAllString(s, "")
-	return strings.ReplaceAll(s, "\r", "")
+	// Drop leftover C0 control characters (SI/SO, CR, bell, etc.) — keep tab.
+	return strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // Spawn is unsupported — starting new work is claude's job, not a terminal's.

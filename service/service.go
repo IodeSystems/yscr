@@ -33,6 +33,7 @@ type Server struct {
 	sources   []source.Source
 	push      *pushHub
 	sse       *sseHub
+	tails     *watchHub
 	cue       *cueRunner    // nil unless Cue.Enabled + a durable store
 	cuegen    *cueGenerator // nil unless Cue.Enabled + store + goals
 	sessionID string
@@ -81,6 +82,7 @@ func New(cfg *config.Config) (*Server, error) {
 		sources:   sources,
 		push:      ph,
 		sse:       newSSEHub(),
+		tails:     newWatchHub(),
 		sessionID: "primary",
 	}
 	s.summ = newSummarizer(runner, s.broadcastActivity, s.broadcastFleet)
@@ -122,6 +124,8 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"public_key": s.cfg.VAPID.Public})
 	})
 	mux.HandleFunc("GET /api/stream", s.serveStream)
+	mux.HandleFunc("POST /api/watch/{source}/{id}", s.handleWatch)
+	mux.HandleFunc("DELETE /api/watch/{source}/{id}", s.handleUnwatch)
 	mux.HandleFunc("POST /api/push/subscribe", s.handleSubscribe)
 	mux.HandleFunc("POST /api/push/test", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"sent": s.Notify("YSCR", "Test notification — you're subscribed.")})

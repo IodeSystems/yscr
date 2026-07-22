@@ -40,8 +40,8 @@ type fakeCueStore struct {
 	lastRunID string   // run_session passed to the last MarkInflight
 }
 
-func (f *fakeCueStore) PendingTasks(context.Context) ([]cue.Task, error)     { return f.pending, nil }
-func (f *fakeCueStore) InflightTasks(context.Context) ([]cue.Task, error)    { return f.inflight, nil }
+func (f *fakeCueStore) PendingTasks(context.Context) ([]cue.Task, error)  { return f.pending, nil }
+func (f *fakeCueStore) InflightTasks(context.Context) ([]cue.Task, error) { return f.inflight, nil }
 func (f *fakeCueStore) InflightRows(context.Context) ([]store.InflightRow, error) {
 	return f.rows, nil
 }
@@ -69,9 +69,11 @@ type fakeCueSource struct {
 	spawns []source.SpawnSpec
 }
 
-func (f *fakeCueSource) ID() string                                             { return f.id }
-func (f *fakeCueSource) List(context.Context) ([]source.SessionRef, error)      { return nil, nil }
-func (f *fakeCueSource) State(context.Context, string) (source.State, error)    { return source.State{}, nil }
+func (f *fakeCueSource) ID() string                                        { return f.id }
+func (f *fakeCueSource) List(context.Context) ([]source.SessionRef, error) { return nil, nil }
+func (f *fakeCueSource) State(context.Context, string) (source.State, error) {
+	return source.State{}, nil
+}
 func (f *fakeCueSource) Observe(context.Context, string) (<-chan source.Event, error) {
 	return nil, nil
 }

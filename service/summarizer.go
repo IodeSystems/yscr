@@ -38,7 +38,7 @@ type sumEntry struct {
 type summarizer struct {
 	runner     agent.LLMRunner
 	onActivity func(kind, key, title string) // "summarizing" | "idle"
-	onUpdated  func()                         // a digest changed → nudge clients
+	onUpdated  func()                        // a digest changed → nudge clients
 	sem        chan struct{}
 
 	mu    sync.Mutex

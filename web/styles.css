@@ -194,6 +194,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .dq-title { font-weight: 600; font-size: 14px; }
 .dq-intro { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .dq-field { font-size: 13px; margin-top: 6px; }
+.watch-btn { font-size: 13px; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); cursor: pointer; }
+.watch-btn.on { color: var(--accent); border-color: var(--accent); }
+.tail-out { margin-top: 8px; max-height: 40vh; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; color: var(--muted); }
 .dq-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .dq-opt { border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 12px; color: var(--muted); }
 .dq-note { color: var(--muted); font-size: 12px; font-style: italic; margin-top: 8px; }

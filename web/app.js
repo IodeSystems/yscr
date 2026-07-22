@@ -169,14 +169,83 @@ function openDetail(s) {
     html += `<div class="dq-note">Answer these in the Questions section below.</div></div>`;
   }
 
+  // Live output tail (pipe-pane stream for terminal panes; a one-shot summary
+  // for sources without a live stream, e.g. claude-code).
+  if (ref.Source && ref.ID) {
+    html += `<div class="dsection">
+      <button id="watch-btn" class="watch-btn">▶ Watch output</button>
+      <pre id="tail-out" class="tail-out" hidden></pre>
+    </div>`;
+  }
+
   $("#detail-body").innerHTML = html;
+
+  const wb = $("#watch-btn");
+  if (wb) wb.addEventListener("click", () => toggleWatch(ref.Source, ref.ID));
+  syncWatchUI();
+
   $("#detail").hidden = false;
   detailOpen = true;
+}
+
+// ── live output tail (SSE-driven) ───────────────────────────────────
+let watching = null; // {source, id} or null
+const TAIL_MAX = 500; // cap retained lines
+
+async function toggleWatch(source, id) {
+  if (watching && watching.source === source && watching.id === id) {
+    await stopWatch();
+    return;
+  }
+  if (watching) await stopWatch();
+  try {
+    const r = await fetch(`/api/watch/${encodeURIComponent(source)}/${encodeURIComponent(id)}`, { method: "POST" });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || `HTTP ${r.status}`);
+    }
+    watching = { source, id };
+    const out = $("#tail-out");
+    if (out) out.textContent = "";
+    syncWatchUI();
+  } catch (e) {
+    toast("Watch failed", e.message);
+  }
+}
+
+async function stopWatch() {
+  if (!watching) return;
+  const { source, id } = watching;
+  watching = null;
+  syncWatchUI();
+  try {
+    await fetch(`/api/watch/${encodeURIComponent(source)}/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch (_) {}
+}
+
+function syncWatchUI() {
+  const wb = $("#watch-btn");
+  if (!wb) return;
+  const on = watching !== null;
+  wb.textContent = on ? "■ Stop watching" : "▶ Watch output";
+  wb.classList.toggle("on", on);
+  const out = $("#tail-out");
+  if (out) out.hidden = !on;
+}
+
+function appendTail(line) {
+  const out = $("#tail-out");
+  if (!out) return;
+  out.textContent += (out.textContent ? "\n" : "") + line;
+  const lines = out.textContent.split("\n");
+  if (lines.length > TAIL_MAX) out.textContent = lines.slice(-TAIL_MAX).join("\n");
+  out.scrollTop = out.scrollHeight;
 }
 
 function closeDetail() {
   $("#detail").hidden = true;
   detailOpen = false;
+  if (watching) stopWatch(); // release the server-side pipe
 }
 
 // Dismiss: tap the dimmed backdrop (not the sheet) or press Escape.
@@ -829,6 +898,18 @@ function connectStream() {
       if (a.kind === "summarizing") bgActive.set(a.session, a.title || a.session);
       else bgActive.delete(a.session);
       renderBgActivity();
+    } catch (_) {}
+  });
+  es.addEventListener("tail", (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      if (watching && d.source === watching.source && d.id === watching.id) appendTail(d.line);
+    } catch (_) {}
+  });
+  es.addEventListener("tail-end", (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      if (watching && d.source === watching.source && d.id === watching.id) appendTail("— stream ended —");
     } catch (_) {}
   });
   es.onerror = () => {}; // EventSource auto-reconnects
