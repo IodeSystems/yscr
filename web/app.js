@@ -2,7 +2,14 @@
 // background + push notifications.
 
 const $ = (s) => document.querySelector(s);
-const api = (p, opts) => fetch(p, opts).then((r) => (r.ok ? r : Promise.reject(new Error(r.status))));
+const api = (p, opts) =>
+  fetch(p, opts).then(async (r) => {
+    if (r.ok) return r;
+    // Surface the server's error body, not a bare status. Handlers reply
+    // {"error": "..."}; fall back to "HTTP <status>" when there's no JSON.
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${r.status}`);
+  });
 
 // ── activity status line (recording / transcribing / thinking) ──────
 // A single-line indicator above the composer. kind drives the dot color +
