@@ -663,14 +663,23 @@ func (a *Adapter) Act(ctx context.Context, s pane.Session, action source.Action,
 }
 
 // keystrokesFor maps a validated Answer to the sequence of send-keys arg tails
-// that drive the selector. Single-question prompts only; digit keys address
-// options by 1-based index (so >9 options aren't addressable).
+// that drive Claude's AskUserQuestion selector. Digit keys address options by
+// 1-based index within each question (so >9 options aren't addressable).
+//
+// The selector protocol (verified against the live TUI):
+//   - single-select question: the digit SELECTS and auto-advances (to the next
+//     question, or — for a lone single-select question — submits immediately);
+//   - multi-select question: each digit TOGGLES a checkbox, then an advance key
+//     moves on (Tab between questions in a multi-question prompt; Right to the
+//     Review tab in a lone multi-select question);
+//   - a multi-question or multi-select prompt lands on a Review tab, submitted
+//     with "1" (Submit answers). A lone single-select question needs no submit.
 func keystrokesFor(q source.Questionnaire, answers map[string]any) ([][]string, error) {
-	if len(q.Fields) != 1 {
-		return nil, fmt.Errorf("claude-code: %d-question prompts aren't auto-answerable yet — answer it in the pane", len(q.Fields))
+	if len(q.Fields) == 0 {
+		return nil, fmt.Errorf("claude-code: no questions to answer")
 	}
-	f := q.Fields[0]
-	digitOf := func(val string) (string, error) {
+	multiQuestion := len(q.Fields) > 1
+	digitOf := func(f source.Field, val string) (string, error) {
 		for i, o := range f.Options {
 			if o.Value == val {
 				if i+1 > 9 {
@@ -681,33 +690,49 @@ func keystrokesFor(q source.Questionnaire, answers map[string]any) ([][]string, 
 		}
 		return "", fmt.Errorf("claude-code: %q is not an option of %q", val, f.Key)
 	}
-	raw, ok := answers[f.Key]
-	if !ok {
-		return nil, fmt.Errorf("claude-code: no answer for %q", f.Key)
-	}
+
 	var keys [][]string
-	if f.Type == source.FieldMulti {
-		vals := toStrings(raw)
-		if len(vals) == 0 {
-			return nil, fmt.Errorf("claude-code: no selections for %q", f.Key)
+	// A lone single-select question auto-submits on its digit; every other shape
+	// (multi-question, or any multi-select) ends on a Review tab needing "1".
+	autoSubmits := !multiQuestion && q.Fields[0].Type != source.FieldMulti
+
+	for _, f := range q.Fields {
+		raw, ok := answers[f.Key]
+		if !ok {
+			return nil, fmt.Errorf("claude-code: no answer for %q", f.Key)
 		}
-		for _, v := range vals {
-			d, err := digitOf(v)
+		if f.Type == source.FieldMulti {
+			vals := toStrings(raw)
+			if len(vals) == 0 {
+				return nil, fmt.Errorf("claude-code: no selections for %q", f.Key)
+			}
+			for _, v := range vals {
+				d, err := digitOf(f, v)
+				if err != nil {
+					return nil, err
+				}
+				keys = append(keys, []string{"-l", d}) // toggle
+			}
+			// Advance off this question: Tab to the next question tab (multi-
+			// question), or Right to the Review tab (lone multi-select question).
+			if multiQuestion {
+				keys = append(keys, []string{"Tab"})
+			} else {
+				keys = append(keys, []string{"Right"})
+			}
+		} else {
+			v, _ := raw.(string)
+			d, err := digitOf(f, v)
 			if err != nil {
 				return nil, err
 			}
-			keys = append(keys, []string{"-l", d})
+			keys = append(keys, []string{"-l", d}) // selects + auto-advances
 		}
-		keys = append(keys, []string{"Right"})
-		keys = append(keys, []string{"-l", "1"})
-		return keys, nil
 	}
-	v, _ := raw.(string)
-	d, err := digitOf(v)
-	if err != nil {
-		return nil, err
+	if !autoSubmits {
+		keys = append(keys, []string{"-l", "1"}) // Submit answers
 	}
-	return [][]string{{"-l", d}}, nil
+	return keys, nil
 }
 
 func toStrings(v any) []string {

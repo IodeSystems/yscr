@@ -43,6 +43,17 @@ until agentkit is go-gettable).
 
 ## Active work
 
+### ✅ Multi-question AskUserQuestion auto-answer
+`keystrokesFor` refused `len(Fields) != 1` ("2-question prompts aren't
+auto-answerable"). Reverse-engineered Claude's multi-question tab TUI on a
+throwaway session and implemented it. **Verified protocol:** single-select digit
+selects + auto-advances; multi-select digit toggles then **Tab** advances;
+lands on Review → **"1"** submits. Lone single-select still auto-submits on its
+digit (unchanged). Needs the hook payload (all questions structured); the
+pane-parse fallback stays read-only. Unit tested (all-single / mixed / lone
+regressions / missing-answer); verified end-to-end via `POST /api/answer` on a
+live throwaway prompt (Env=Production + Notify=[Email,SMS] submitted correctly).
+
 ### ✅ Pluggable pane source — generic tmux source + program adapters
 `plugins/claudecode` → `plugins/pane` (generic Source shell: tmux plumbing +
 pid↔tty↔pane join + pane scan/classify) parameterized by a program **Adapter**

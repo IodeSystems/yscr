@@ -599,6 +599,81 @@ func TestAct_NoPaneErrors(t *testing.T) {
 	}
 }
 
+// keystrokesFor for multi-question prompts — the protocol verified against the
+// live AskUserQuestion TUI (digit selects+advances; multi-select toggles+Tab;
+// Review submitted with "1").
+func keysEqual(a, b [][]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.Join(a[i], " ") != strings.Join(b[i], " ") {
+			return false
+		}
+	}
+	return true
+}
+
+func TestKeystrokes_MultiQuestionAllSingle(t *testing.T) {
+	q := source.Questionnaire{Fields: []source.Field{
+		{Key: "Color", Type: source.FieldChoice, Options: []source.Option{{Value: "Red"}, {Value: "Green"}, {Value: "Blue"}}},
+		{Key: "Size", Type: source.FieldChoice, Options: []source.Option{{Value: "Small"}, {Value: "Large"}}},
+	}}
+	keys, err := keystrokesFor(q, map[string]any{"Color": "Green", "Size": "Large"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Green=2 (advances), Large=2 (advances to Review), 1 (Submit).
+	want := [][]string{{"-l", "2"}, {"-l", "2"}, {"-l", "1"}}
+	if !keysEqual(keys, want) {
+		t.Errorf("keys = %v; want %v", keys, want)
+	}
+}
+
+func TestKeystrokes_MultiQuestionMixed(t *testing.T) {
+	q := source.Questionnaire{Fields: []source.Field{
+		{Key: "Toppings", Type: source.FieldMulti, Options: []source.Option{{Value: "Cheese"}, {Value: "Onion"}, {Value: "Mushroom"}}},
+		{Key: "Size", Type: source.FieldChoice, Options: []source.Option{{Value: "Small"}, {Value: "Large"}}},
+	}}
+	keys, err := keystrokesFor(q, map[string]any{"Toppings": []any{"Cheese", "Mushroom"}, "Size": "Small"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Toggle Cheese=1, Mushroom=3, Tab (advance); Small=1 (advances to Review); 1 (Submit).
+	want := [][]string{{"-l", "1"}, {"-l", "3"}, {"Tab"}, {"-l", "1"}, {"-l", "1"}}
+	if !keysEqual(keys, want) {
+		t.Errorf("keys = %v; want %v", keys, want)
+	}
+}
+
+// A lone single-select question still auto-submits on its digit (no "1"); a lone
+// multi-select still toggles → Right → "1". (Regression: single-question path.)
+func TestKeystrokes_SingleQuestionUnchanged(t *testing.T) {
+	single := source.Questionnaire{Fields: []source.Field{
+		{Key: "answer", Type: source.FieldChoice, Options: []source.Option{{Value: "A"}, {Value: "B"}}},
+	}}
+	if keys, _ := keystrokesFor(single, map[string]any{"answer": "B"}); !keysEqual(keys, [][]string{{"-l", "2"}}) {
+		t.Errorf("lone single-select = %v; want just [-l 2]", keys)
+	}
+	multi := source.Questionnaire{Fields: []source.Field{
+		{Key: "answer", Type: source.FieldMulti, Options: []source.Option{{Value: "A"}, {Value: "B"}, {Value: "C"}}},
+	}}
+	keys, _ := keystrokesFor(multi, map[string]any{"answer": []any{"A", "C"}})
+	if !keysEqual(keys, [][]string{{"-l", "1"}, {"-l", "3"}, {"Right"}, {"-l", "1"}}) {
+		t.Errorf("lone multi-select = %v", keys)
+	}
+}
+
+func TestKeystrokes_MissingAnswerErrors(t *testing.T) {
+	q := source.Questionnaire{Fields: []source.Field{
+		{Key: "Color", Type: source.FieldChoice, Options: []source.Option{{Value: "Red"}}},
+		{Key: "Size", Type: source.FieldChoice, Options: []source.Option{{Value: "Small"}}},
+	}}
+	if _, err := keystrokesFor(q, map[string]any{"Color": "Red"}); err == nil {
+		t.Error("want error when a question has no answer")
+	}
+}
+
 func TestAct_NoQuestionErrors(t *testing.T) {
 	a := newAdapter(fakeHome(t))
 	f := &fakeTmux{live: map[string]string{"sess-A": "work:2.1"}, capture: "just a shell prompt\n❯ "}
