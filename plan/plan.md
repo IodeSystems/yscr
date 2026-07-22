@@ -84,11 +84,17 @@ programs is the optional `Adopter` seam (empty today). Tests migrated (fake
   when speak-mode is on. Backend tested (+race); verified live — the local LLM
   narrated a real `go vet`/`ls` run conversationally ("Vet passed cleanly, and
   I'm now inspecting the file structure…").
+- ✅ **claude Streamer** — the claude adapter now implements `pane.Streamer` by
+  tailing the JSONL transcript from its current end (open+seek synchronously to
+  fix the start point; poll for appended records; project each new turn via the
+  shared `projectRecord`). So claude sessions feed Watch + Narrate just like
+  terminal panes. Note: Claude writes records at TURN boundaries, so narration
+  updates per-turn, not continuously. Tested (+race); verified live — a working
+  ml-kit session narrated "Claude is updating the P16a phase status…".
 - **deferred (next slices):** ambient auto-narration of active sessions (vs
   today's per-session trigger) + push delivery for phone/not-looking; history
-  depth — tool-call aggregation ("read a dozen files") + JSONL watermark;
-  `send()` paste-buffer fix; a claude Streamer (tail the JSONL) so claude
-  sessions narrate too (today only terminal panes stream).
+  depth — tool-call aggregation ("read a dozen files") + incremental History via
+  the same watermark; `send()` paste-buffer fix.
 
 ### ◻ Task cueing system — outbound scheduler (concierge → sessions)
 The mirror of the inbound coalescing dispatch: an outbound scheduler that manages

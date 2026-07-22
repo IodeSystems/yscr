@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,7 +38,14 @@ const SourceID = "claude-code"
 // program is the tmux pane_current_command for a Claude CLI pane.
 const program = "claude"
 
-var _ pane.Adapter = (*Adapter)(nil)
+var (
+	_ pane.Adapter  = (*Adapter)(nil)
+	_ pane.Streamer = (*Adapter)(nil)
+)
+
+// streamPollDefault is how often Stream checks the transcript for appended
+// records. Claude turns are slow, so 1s is plenty; the narrator buffers anyway.
+const streamPollDefault = time.Second
 
 // Adapter implements pane.Adapter for Claude Code. It holds no tmux state — the
 // source lends a pane.Tmux for pane I/O; only sessions we launch before they
@@ -50,6 +58,7 @@ type Adapter struct {
 	modTime    func(path string) (int64, bool)
 	newID      func() string
 	sleep      func(time.Duration)
+	streamPoll time.Duration // transcript tail cadence; overridable in tests
 
 	mu      sync.Mutex
 	tracked map[string]string // sid → cwd for sessions launched pre-index
@@ -76,9 +85,10 @@ func New(cfg Config) *Adapter {
 			}
 			return fi.ModTime().UnixNano(), true
 		},
-		newID:   newUUID,
-		sleep:   time.Sleep,
-		tracked: map[string]string{},
+		newID:      newUUID,
+		sleep:      time.Sleep,
+		streamPoll: streamPollDefault,
+		tracked:    map[string]string{},
 	}
 	if len(a.command) == 0 {
 		a.command = []string{"claude"}
@@ -321,6 +331,86 @@ func (a *Adapter) History(_ context.Context, s pane.Session, n int, _ pane.Tmux)
 	return strings.Join(turns, "\n"), nil
 }
 
+// Stream implements pane.Streamer: it tails the JSONL transcript from its
+// current end, emitting one event per newly-appended turn (projected the same
+// way History projects — assistant/user text + tool-call summaries, thinking and
+// tool_result bodies dropped). This lets a claude session feed the narration
+// path just like a terminal pane. The Tmux handle is unused — the transcript,
+// not the pane, is the source. Runs until ctx is cancelled.
+func (a *Adapter) Stream(ctx context.Context, s pane.Session, _ pane.Tmux) (<-chan source.Event, error) {
+	ref := source.SessionRef{Source: SourceID, ID: s.ID, Title: title(a.cwdOf(s)), Dir: a.cwdOf(s)}
+	cwd := a.cwdOf(s)
+	if cwd == "" {
+		ch := make(chan source.Event)
+		close(ch)
+		return ch, nil
+	}
+	path := a.transcriptPath(cwd, s.ID)
+	out := make(chan source.Event)
+	// Open + seek to the current end SYNCHRONOUSLY so the start point is fixed at
+	// call time — any turn appended after Stream returns is captured (no race with
+	// the goroutine's seek).
+	f, err := os.Open(path)
+	if err != nil {
+		close(out)
+		return out, nil // no transcript yet — nothing to tail
+	}
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		f.Close()
+		close(out)
+		return out, nil
+	}
+	go func() {
+		defer close(out)
+		defer f.Close()
+		ticker := time.NewTicker(a.streamPoll)
+		defer ticker.Stop()
+		buf := make([]byte, 0, 8*1024)
+		chunk := make([]byte, 32*1024)
+		emit := func(line string) bool {
+			t, ok := projectRecord(line)
+			if !ok {
+				return true
+			}
+			select {
+			case out <- source.Event{Ref: ref, Kind: source.EventProgress, Content: t, At: a.now()}:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Drain everything appended since the last read (os.File keeps its
+				// offset; a Read after the file grew returns the new bytes).
+				for {
+					n, _ := f.Read(chunk)
+					if n == 0 {
+						break
+					}
+					buf = append(buf, chunk[:n]...)
+				}
+				// Process only COMPLETE lines; keep a partial trailing line buffered.
+				for {
+					i := bytes.IndexByte(buf, '\n')
+					if i < 0 {
+						break
+					}
+					line := string(buf[:i])
+					buf = buf[i+1:]
+					if !emit(line) {
+						return
+					}
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
 // projectTranscript renders a Claude JSONL transcript to compact turn lines:
 // user/assistant text plus a one-token summary of each tool call. It DROPS the
 // bulk — chain-of-thought (thinking), tool_result bodies, and non-message
@@ -328,51 +418,61 @@ func (a *Adapter) History(_ context.Context, s pane.Session, n int, _ pane.Tmux)
 func projectTranscript(b []byte) []string {
 	var turns []string
 	for _, ln := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(ln) == "" {
-			continue
-		}
-		var o struct {
-			Type    string `json:"type"`
-			Message *struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal([]byte(ln), &o) != nil || o.Message == nil {
-			continue
-		}
-		switch o.Type {
-		case "user":
-			if t := clip(contentText(o.Message.Content), 500); t != "" {
-				turns = append(turns, "user: "+t)
-			}
-		case "assistant":
-			var parts []struct {
-				Type  string          `json:"type"`
-				Text  string          `json:"text"`
-				Name  string          `json:"name"`
-				Input json.RawMessage `json:"input"`
-			}
-			if json.Unmarshal(o.Message.Content, &parts) != nil {
-				continue
-			}
-			var line strings.Builder
-			for _, pt := range parts {
-				switch pt.Type {
-				case "text":
-					if t := strings.TrimSpace(pt.Text); t != "" {
-						line.WriteString(t)
-					}
-				case "tool_use":
-					line.WriteString("  ⟶ " + pt.Name + toolHint(pt.Input))
-				}
-				// thinking / redacted_thinking: dropped.
-			}
-			if s := clip(strings.TrimSpace(line.String()), 500); s != "" {
-				turns = append(turns, "claude: "+s)
-			}
+		if t, ok := projectRecord(ln); ok {
+			turns = append(turns, t)
 		}
 	}
 	return turns
+}
+
+// projectRecord projects ONE JSONL record to a compact turn line, or ("",false)
+// for records that carry no turn (thinking, tool_result echoes, non-message).
+// Shared by whole-transcript History and the incremental Stream tail.
+func projectRecord(ln string) (string, bool) {
+	if strings.TrimSpace(ln) == "" {
+		return "", false
+	}
+	var o struct {
+		Type    string `json:"type"`
+		Message *struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal([]byte(ln), &o) != nil || o.Message == nil {
+		return "", false
+	}
+	switch o.Type {
+	case "user":
+		if t := clip(contentText(o.Message.Content), 500); t != "" {
+			return "user: " + t, true
+		}
+	case "assistant":
+		var parts []struct {
+			Type  string          `json:"type"`
+			Text  string          `json:"text"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(o.Message.Content, &parts) != nil {
+			return "", false
+		}
+		var line strings.Builder
+		for _, pt := range parts {
+			switch pt.Type {
+			case "text":
+				if t := strings.TrimSpace(pt.Text); t != "" {
+					line.WriteString(t)
+				}
+			case "tool_use":
+				line.WriteString("  ⟶ " + pt.Name + toolHint(pt.Input))
+			}
+			// thinking / redacted_thinking: dropped.
+		}
+		if s := clip(strings.TrimSpace(line.String()), 500); s != "" {
+			return "claude: " + s, true
+		}
+	}
+	return "", false
 }
 
 // toolHint pulls one short scalar from a tool_use input for a "(hint)" suffix.

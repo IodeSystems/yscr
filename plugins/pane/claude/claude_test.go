@@ -104,6 +104,7 @@ func newAdapter(home string) *Adapter {
 	a.newID = func() string { return "new-uuid" }
 	a.modTime = func(string) (int64, bool) { return 0, false } // default: idle
 	a.sleep = func(time.Duration) {}
+	a.streamPoll = 5 * time.Millisecond // fast tail for tests
 	return a
 }
 
@@ -253,6 +254,84 @@ func TestHistory_UnknownSession(t *testing.T) {
 	a := newAdapter(fakeHome(t))
 	if _, err := a.History(context.Background(), pane.Session{ID: "nope"}, 0, &fakeTmux{}); err == nil {
 		t.Fatal("want error for unknown session")
+	}
+}
+
+// ── Stream (JSONL tail → narration events) ──────────────────────────
+
+// Stream starts from the CURRENT end of the transcript and emits one projected
+// event per newly-appended turn — dropping thinking + tool_result records.
+func TestStream_TailsAppendedTurns(t *testing.T) {
+	home := fakeHome(t)
+	a := newAdapter(home)
+	path := filepath.Join(home, "projects", "-repo-alpha", "sess-A.jsonl")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := a.Stream(ctx, sessA(), &fakeTmux{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Append AFTER Stream started — only these should be emitted (not the fixture
+	// history that was already in the file at seek time).
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendRec := func(s string) {
+		if _, err := f.WriteString(s + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendRec(`{"type":"user","message":{"role":"user","content":"ship it"}}`)
+	appendRec(`{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"on it"},{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}`)
+	appendRec(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"PASS"}]}}`) // dropped (tool_result echo)
+	f.Close()
+
+	var got []string
+	deadline := time.After(2 * time.Second)
+	for len(got) < 2 {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatalf("stream closed early; got %v", got)
+			}
+			got = append(got, ev.Content)
+		case <-deadline:
+			t.Fatalf("timed out; got %v", got)
+		}
+	}
+	want := []string{"user: ship it", "claude: on it ⟶ Bash(go test ./...)"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("stream events = %v; want %v", got, want)
+	}
+	for _, g := range got {
+		if strings.Contains(g, "hmm") || strings.Contains(g, "PASS") {
+			t.Errorf("dropped record leaked: %q", g)
+		}
+	}
+}
+
+// A session with no transcript yields an immediately-closed channel.
+func TestStream_NoTranscriptCloses(t *testing.T) {
+	a := newAdapter(fakeHome(t))
+	ch, err := a.Stream(context.Background(), pane.Session{Source: SourceID, ID: "sess-A", Cwd: "/repo/none"}, &fakeTmux{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := <-ch; ok {
+		t.Error("stream with no transcript should be an empty closed channel")
+	}
+}
+
+// Cancelling ctx ends the tail.
+func TestStream_CtxCancelEnds(t *testing.T) {
+	a := newAdapter(fakeHome(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	ch, _ := a.Stream(ctx, sessA(), &fakeTmux{})
+	cancel()
+	for range ch { // drains to close
 	}
 }
 
