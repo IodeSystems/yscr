@@ -44,10 +44,13 @@ async function send(message, voice) {
   pending.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
   setStatus("Thinking…", "think");
   try {
+    // Medium hint: if this reply will be SPOKEN (speak-mode on), the model keeps
+    // it short and speakable — verbosity tuned to the channel.
+    const medium = (voice || speakOn) ? "speech" : "text";
     const r = await api("/api/converse", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, medium }),
     });
     const { reply } = await r.json();
     pending.classList.remove("thinking");

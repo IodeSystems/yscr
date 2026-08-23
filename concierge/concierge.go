@@ -84,10 +84,18 @@ func (c *Concierge) WithSystem(s string) *Concierge { c.system = s; return c }
 // The concierge may call source tools (fleet_status, pull_detail, post, spawn)
 // before replying.
 func (c *Concierge) Converse(ctx context.Context, sessionID, userMessage string) (string, error) {
+	return c.ConverseOn(ctx, sessionID, userMessage, "")
+}
+
+// ConverseOn is Converse with a MEDIUM hint: the channel this turn is heard on.
+// "speech" tells the model its reply will be spoken aloud — it must stay short
+// and speakable (no lists, no code, no raw ids). The medium rides the dispatch
+// queue so coalesced turns keep the LAST caller's channel.
+func (c *Concierge) ConverseOn(ctx context.Context, sessionID, userMessage, medium string) (string, error) {
 	q := c.queue(sessionID)
 	done := make(chan convRes, 1)
 	select {
-	case q.ch <- convReq{msg: userMessage, done: done}:
+	case q.ch <- convReq{msg: userMessage, medium: medium, done: done}:
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}

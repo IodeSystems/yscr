@@ -25,5 +25,17 @@ medium never reaches the model.
    retire the batch path; show partials in the input box.
 
 ## Status
-◐ in progress — #1 not started; #2 not started; #3 not started; #4 prototype
-landed, needs the live browser drive.
+◐ in progress.
+
+- ✅ **#1 medium hint in the contract** — `ConverseOn(ctx, session, msg, medium)`
+  ("" | "text" | "speech"); the medium rides the dispatch queue so coalesced
+  turns keep the LAST caller's channel; a speech turn gets a one-line prefix on
+  the merged user message ("heard by voice — at most two short sentences; no
+  lists, code, or ids"). `POST /api/converse` accepts `"medium"`; the PWA sends
+  "speech" when the utterance was voiced OR speak-mode is on (the reply will be
+  spoken). Text-only turns cost nothing. Tested: coalesced text+voice turn
+  carries the hint.
+- ◻ #2 narration materiality port (autowork3 yscr_status.go distill L1 / L2 gate) — not started.
+- ◻ #3 ambient auto-narration + push delivery — not started (needs #2's gate).
+- ◐ #4 streaming STT live drive — prototype landed; the browser mic→worklet path
+  is the only unverified seam.

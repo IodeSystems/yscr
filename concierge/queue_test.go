@@ -93,3 +93,58 @@ func TestConverse_CoalescesDuringTurn(t *testing.T) {
 		t.Errorf("coalesced callers got different replies: %q vs %q", r2, r3)
 	}
 }
+
+func TestMediumHint(t *testing.T) {
+	if got := mediumHint("speech"); !strings.Contains(got, "voice") || !strings.Contains(got, "two short sentences") {
+		t.Fatalf("speech hint wrong: %q", got)
+	}
+	if got := mediumHint(""); got != "" {
+		t.Fatalf("text hint must be empty, got %q", got)
+	}
+	if got := mediumHint("bogus"); got != "" {
+		t.Fatalf("unknown medium must be empty, got %q", got)
+	}
+}
+
+func TestConverseOn_SpeechCoalesces(t *testing.T) {
+	gr := &gateRunner{started: make(chan struct{}), gate: make(chan struct{})}
+	c := New(gr, store.NewMem())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	rep1 := make(chan string, 1)
+	rep2 := make(chan string, 1)
+	// text turn (blocks on the gate), then a voice turn queued mid-turn.
+	go func() { s, _ := c.Converse(ctx, "s", "first"); rep1 <- s }()
+	<-gr.started
+	go func() { s, _ := c.ConverseOn(ctx, "s", "second", "speech"); rep2 <- s }()
+	close(gr.gate)
+	select {
+	case <-rep1:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first caller never got a reply")
+	}
+	select {
+	case <-rep2:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second caller never got a reply")
+	}
+
+	var last string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if len(gr.users) > 0 {
+			last = gr.users[len(gr.users)-1]
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if last == "" {
+		t.Fatal("turn never ran")
+	}
+	if !strings.Contains(last, "second") {
+		t.Fatalf("coalesced message wrong: %q", last)
+	}
+	if !strings.Contains(last, "heard by voice") {
+		t.Fatalf("speech hint missing from coalesced turn: %q", last)
+	}
+}

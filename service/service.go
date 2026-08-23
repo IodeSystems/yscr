@@ -182,12 +182,13 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) handleConverse(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Message string `json:"message"`
+		Medium  string `json:"medium"` // "" | "text" | "speech" — how this turn is heard
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Message == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "message is required"})
 		return
 	}
-	reply, err := s.conc.Converse(r.Context(), s.sessionID, in.Message)
+	reply, err := s.conc.ConverseOn(r.Context(), s.sessionID, in.Message, in.Medium)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return

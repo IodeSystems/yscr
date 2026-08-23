@@ -38,7 +38,7 @@ checks; the concierge only mediates (read-back → confirm → call `Act`).
 | `plan/goal-plans.md` | goal → dependency graph, open-questions queue, work-around-ambiguity | ✅ core done |
 | `plan/reports.md` | diagrams + detailed reports on request | ✅ core done |
 | `plan/decision-memory.md` | decision log, preference auto-resolve | ✅ core done |
-| `plan/audio.md` | medium-aware verbosity, ambient narration, streaming STT live drive | ◐ |
+| `plan/audio.md` | medium-aware verbosity ✅, ambient narration, streaming STT live drive | ◐ |
 | `plan/ops.md` | systemd unit, durable session registries, optional auth | ◻ |
 | `plan/cutover.md` | P3 — delete in-process YSCR from autowork3, repoint Android client | ◻ |
 

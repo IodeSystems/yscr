@@ -24,8 +24,9 @@ import (
 const turnTimeout = 5 * time.Minute
 
 type convReq struct {
-	msg  string
-	done chan convRes
+	msg   string
+	medium string // "" | "text" | "speech" — the channel this turn is heard on
+	done  chan convRes
 }
 
 type convRes struct {
@@ -74,16 +75,34 @@ func (c *Concierge) worker(sessionID string, q *sessQueue) {
 		for i, r := range batch {
 			msgs[i] = r.msg
 		}
+		// The medium the LAST caller is on wins: if any of the coalesced utterances
+		// will be heard by ear, the reply must be speakable.
+		medium := ""
+		for _, r := range batch {
+			if r.medium != "" {
+				medium = r.medium
+			}
+		}
 
 		// Background context, not any caller's: a coalesced turn serves several
 		// callers, so no single request's cancellation should abort it. Bounded so a
 		// stuck turn can't wedge the session.
 		ctx, cancel := context.WithTimeout(context.Background(), turnTimeout)
-		reply, err := c.runTurn(ctx, sessionID, strings.Join(msgs, "\n"))
+		reply, err := c.runTurn(ctx, sessionID, mediumHint(medium)+strings.Join(msgs, "\n"))
 		cancel()
 
 		for _, r := range batch {
 			r.done <- convRes{reply: reply, err: err} // done is buffered(1); never blocks
 		}
 	}
+}
+
+// mediumHint prefixes the merged user message with a channel note when the turn
+// will be heard by ear. It rides the message (not the system prompt) so it
+// coalesces naturally and costs nothing on text-only turns.
+func mediumHint(medium string) string {
+	if medium == "speech" {
+		return "[heard by voice — reply in at most two short sentences; no lists, code, or ids]\n"
+	}
+	return ""
 }
