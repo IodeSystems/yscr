@@ -1,0 +1,16 @@
+# yscr — done (one-line pointers)
+
+- **Multi-question AskUserQuestion auto-answer** — verified tab-TUI protocol + post-submit verification (`plugins/pane/claude`).
+- **Pluggable pane source** — generic tmux shell + program Adapters; claude (JSONL, pid→tty→pane adoption, question detect/answer) + terminal (scrollback, pipe-pane stream).
+- **Watch (SSE live-tail)** `POST/DELETE /api/watch/{source}/{id}` + PWA tail panel.
+- **Narrate** — LLM delta summary → TTS, per-session toggle (`service/narrate.go`).
+- **Task cueing system** — generator → durable cue → deterministic release gate → autonomous dispatch (rails: kill-switch/dry-run/caps/hourly) → completion reconcile. Ships OFF.
+- **source.Source contract (Slice 0)** + Questionnaire crux; three backends validate it (autowork, openai, pane:claude).
+- **P1 autowork3 source API** — fleet / fleet/decisions / fleet/stream public (autowork3 `87b8bd3`, `bcc5dd9`, `bee6840`).
+- **PWA** — installable; chat, horizontal fleet card scroller, detail sheet, "Needs you" tap-to-answer (`POST /api/answer`, no LLM), web push (VAPID auto-keypair).
+- **Voice** — audio proxy (STT/TTS) + PWA mic/TTS with barge-in suppression; streaming STT prototype (realtime WS relay + PCM worklet) verified backend-side.
+- **Postgres durable store** — conversation survives restart; push subs; cue_tasks.
+- **serialized + coalescing per-session dispatch** (`concierge/queue.go`), server-side queue-not-abort.
+- **PreToolUse hook** — structured question read (primary); `yscr install-hook`.
+- **Deploy** — hz dev proxy, valid TLS at https://ysr.iodesystems.com; `.air.toml` hot-reload in `yscr-air` tmux.
+- **oidio endpoint silence configurable** (`../services/oidio`) — rule1/2/3 yaml knobs.
