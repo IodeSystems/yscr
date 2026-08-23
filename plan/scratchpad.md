@@ -31,4 +31,20 @@ carries in-context.
   claude adapter's spawn into a shell.
 
 ## Status
-◻ todo — not started.
+- ✅ **Slice 1 — todos** (`c7bd92a`): `scratchpad` pkg (Task/Store/Normalize +
+  Mem), Postgres store, concierge add_task/list_tasks/done_task tools,
+  `GET /api/tasks` + `POST /api/tasks/{id}/done`, PWA work-list section.
+- ✅ **Slice 2 — schedules** (`c7bd92a`): cron parser (5-field, minute
+  resolution) + scheduler tick in the watch loop: due one-shots promote into
+  the cue pipeline; completed cron tasks re-arm at the next occurrence.
+- ✅ **Slice 3 — run & watch** (`79dbc86`): terminal adapter `Spawn` (detached
+  sh window, command typed in) + concierge `run_command` tool — foreground
+  waits for idle-at-prompt (bounded) and reports the output tail; background
+  returns the pane id. Live-verified: launched shell windows run commands and
+  their scrollback carries the output.
+- ◻ **next:** LLM-distilled completion summary for long outputs (the raw tail
+  is enough for now); PWA "running commands" view (open command tasks with a
+  Watch shortcut).
+
+**Scratchpad core COMPLETE** — todos, schedules, and run & watch all land.
+Remaining items are polish.

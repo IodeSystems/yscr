@@ -14,3 +14,5 @@
 - **PreToolUse hook** — structured question read (primary); `yscr install-hook`.
 - **Deploy** — hz dev proxy, valid TLS at https://ysr.iodesystems.com; `.air.toml` hot-reload in `yscr-air` tmux.
 - **oidio endpoint silence configurable** (`../services/oidio`) — rule1/2/3 yaml knobs.
+- **Scratchpad — todos + schedules** (`c7bd92a`) — scratchpad pkg (Task/Store, cron), Postgres store, concierge task tools, /api/tasks + PWA work list, scheduler tick (one-shots → cue; cron re-arm).
+- **Scratchpad — run & watch** (`79dbc86`) — terminal adapter Spawn (detached sh window) + run_command tool (foreground bounded wait-for-idle + output tail; background pane id).
