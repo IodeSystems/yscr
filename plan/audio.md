@@ -35,7 +35,16 @@ medium never reaches the model.
   "speech" when the utterance was voiced OR speak-mode is on (the reply will be
   spoken). Text-only turns cost nothing. Tested: coalesced text+voice turn
   carries the hint.
-- ◻ #2 narration materiality port (autowork3 yscr_status.go distill L1 / L2 gate) — not started.
-- ◻ #3 ambient auto-narration + push delivery — not started (needs #2's gate).
+- ✅ **#2 + #3 ambient auto-narration with the materiality port** (`service/ambient.go`).
+  The two-stage gate from autowork3's `yscr_status.go`, adapted: **L1 distill** is
+  deterministic (last meaningful line of the raw delta — no LLM call) and only
+  advances the world-model rev when the snapshot CHANGES; **L2 materiality gate**
+  speaks only on a real advance with one utterance in flight, so an unchanged
+  session never re-fires (the drone dies). The LLM phrases each advance as one
+  spoken sentence → SSE `narration` events (same shape as per-session narrate) +
+  web-push `Notify`. Driven by the fleet watcher (`ambientSync` starts/stops
+  narrations as sessions enter/leave). Ships OFF (`ambient.enabled`).
+  Tests: L1 distill/noise, no-drone gate (20 identical ticks → 1 utterance),
+  E2E loop (advance speaks, drone silent, second advance speaks). -race green.
 - ◐ #4 streaming STT live drive — prototype landed; the browser mic→worklet path
   is the only unverified seam.

@@ -1,5 +1,6 @@
 # yscr — done (one-line pointers)
 
+- **Ambient auto-narration** — L1 deterministic distill + L2 materiality gate (ported from autowork3 yscr_status.go), SSE + push, ships OFF (`ambient.enabled`).
 - **Multi-question AskUserQuestion auto-answer** — verified tab-TUI protocol + post-submit verification (`plugins/pane/claude`).
 - **Pluggable pane source** — generic tmux shell + program Adapters; claude (JSONL, pid→tty→pane adoption, question detect/answer) + terminal (scrollback, pipe-pane stream).
 - **Watch (SSE live-tail)** `POST/DELETE /api/watch/{source}/{id}` + PWA tail panel.

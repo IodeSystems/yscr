@@ -39,6 +39,7 @@ type Server struct {
 	tails      *watchHub
 	narr       *narrator
 	narrations *narrateHub
+	ambient    *ambientHub // nil unless Ambient.Enabled
 	cue        *cueRunner    // nil unless Cue.Enabled + a durable store
 	cuegen     *cueGenerator // nil unless Cue.Enabled + store + goals
 	sched      *scheduler       // nil unless there's a durable store (scratchpad tick)
@@ -93,6 +94,9 @@ func New(cfg *config.Config) (*Server, error) {
 		narr:       newNarrator(runner),
 		narrations: newNarrateHub(),
 		sessionID:  "primary",
+	}
+	if cfg.Ambient.Enabled {
+		s.ambient = newAmbientHub()
 	}
 	s.summ = newSummarizer(runner, s.broadcastActivity, s.broadcastFleet)
 	// Outbound task scheduler (nil unless Cue.Enabled + Postgres). Drives off the

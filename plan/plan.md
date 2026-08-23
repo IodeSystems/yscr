@@ -38,7 +38,7 @@ checks; the concierge only mediates (read-back → confirm → call `Act`).
 | `plan/goal-plans.md` | goal → dependency graph, open-questions queue, work-around-ambiguity | ✅ core done |
 | `plan/reports.md` | diagrams + detailed reports on request | ✅ core done |
 | `plan/decision-memory.md` | decision log, preference auto-resolve | ✅ core done |
-| `plan/audio.md` | medium-aware verbosity ✅, ambient narration, streaming STT live drive | ◐ |
+| `plan/audio.md` | medium-aware verbosity ✅, ambient narration ✅; streaming STT live drive | ◐ |
 | `plan/ops.md` | systemd unit, durable session registries, optional auth | ◻ |
 | `plan/cutover.md` | P3 — delete in-process YSCR from autowork3, repoint Android client | ◻ |
 
@@ -241,7 +241,7 @@ hook payload; write = tmux send-keys.**
 - ◻ **session registries in-memory** — openai/claude-code forget their sessions
   across restart (the tmux/convo survive, but the plugin doesn't list them).
   The claude index is on disk already; wire it back on start. → `plan/ops.md`
-- ◻ **concierge→push hook** — narration → `Notify`. → `plan/audio.md`
+- ✅ **narration → push** — ambient narrations fan out via `Notify` (per-session narrate stays SSE-only).
 - ◐ **streaming STT** (`service/realtime.go`, `web/pcm-worklet.js`) — oidio's
   realtime WS proxied at `GET /api/audio/realtime`; PCM worklet resamples mic →
   24kHz PCM16 frames → `input_audio_buffer.append`; `.completed` → 700ms

@@ -173,6 +173,9 @@ func (s *Server) watch(ctx context.Context) {
 				// Prompt connected clients to re-pull the fleet.
 				s.sse.broadcast(sseMsg{event: "fleet", data: "{}"})
 			}
+			if s.ambient != nil {
+				s.ambientSync(ctx, states) // start narrating new sessions, stop gone ones
+			}
 			prev = cur
 		}
 	}
@@ -210,4 +213,45 @@ func key(st source.State) string { return st.Ref.Source + "/" + st.Ref.ID }
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// ambientSync starts an ambient narration for every fleet session that doesn't
+// have one and stops the ones whose session left the fleet. Called from the
+// watch tick (12s), so a narrated stream lags at most one tick behind reality.
+func (s *Server) ambientSync(ctx context.Context, states []source.State) {
+	seen := map[string]bool{}
+	for _, st := range states {
+		k := key(st)
+		seen[k] = true
+		title := st.Ref.Title
+		if title == "" {
+			title = st.Ref.ID
+		}
+		src := s.sourceByID(st.Ref.Source)
+		if src == nil {
+			continue
+		}
+		s.ambient.mu.Lock()
+		_, active := s.ambient.active[k]
+		s.ambient.mu.Unlock()
+		if active {
+			continue
+		}
+		ch, err := src.Observe(ctx, st.Ref.ID)
+		if err != nil {
+			continue // no stream for this session — skip it this tick
+		}
+		lctx, cancel := context.WithCancel(context.Background())
+		s.ambient.start(k, cancel)
+		go s.ambientLoop(lctx, k, st.Ref.Source, st.Ref.ID, title, ch)
+	}
+	s.ambient.mu.Lock()
+	for k, cancel := range s.ambient.active {
+		if !seen[k] {
+			cancel()
+			delete(s.ambient.active, k)
+			delete(s.ambient.cells, k)
+		}
+	}
+	s.ambient.mu.Unlock()
 }

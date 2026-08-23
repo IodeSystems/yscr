@@ -44,6 +44,11 @@ type Config struct {
 	// the first enabled run only LOGS intended dispatches instead of acting.
 	Cue CueConfig `json:"cue"`
 
+	// Ambient is the auto-narration channel (see service/ambient.go). OFF by
+	// default — it speaks for every session, so it stays disabled until
+	// explicitly turned on.
+	Ambient AmbientConfig `json:"ambient"`
+
 	// path is where this config was loaded from (for saving generated keys).
 	path string `json:"-"`
 }
@@ -87,6 +92,11 @@ type VAPIDConfig struct {
 	Public  string `json:"public"`
 	Private string `json:"private"`
 	Subject string `json:"subject"` // mailto: or https: contact for push services
+}
+
+// AmbientConfig tunes the ambient auto-narration channel.
+type AmbientConfig struct {
+	Enabled bool `json:"enabled"` // master switch (default off)
 }
 
 // CueConfig tunes the outbound task scheduler. The caps map onto cue.Caps; the
