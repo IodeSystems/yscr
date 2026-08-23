@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/iodesystems/yscr/store"
 	"github.com/iodesystems/yscr/source"
+	"github.com/iodesystems/yscr/store"
 )
 
 type fakeSpawner struct{}
 
-func (f *fakeSpawner) ID() string                                  { return "terminal" }
+func (f *fakeSpawner) ID() string                                        { return "terminal" }
 func (f *fakeSpawner) List(context.Context) ([]source.SessionRef, error) { return nil, nil }
 func (f *fakeSpawner) State(context.Context, string) (source.State, error) {
 	return source.State{}, nil

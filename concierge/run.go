@@ -72,5 +72,3 @@ func firstWord(s string) string {
 	}
 	return s
 }
-
-

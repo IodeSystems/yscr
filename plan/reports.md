@@ -25,4 +25,22 @@ the concierge produces:
 - One diagram renderer serves goal-plans (dep graphs) and fleet maps.
 
 ## Status
-◻ todo — not started.
+✅ core done (2026-08-23):
+- `reports/` package: Diagram intermediate form + SVG renderer (left-to-right
+  dep-layering, arrowheads, status colors, XML escaping). Renderers: TaskGraph
+  (cue tasks + deps), FleetMap (sessions by status), StatusBoard (work list).
+  Zero repo imports — adapters copy shapes in.
+- Concierge tools (`concierge/report.go`): `render_diagram(kind)` returns the
+  SVG in a `<diagram>` block; `write_report(topic, body)` persists markdown to
+  `~/.yscr/reports/<ts>-<slug>.md` and returns the path. LLM picks kind/scope +
+  writes the report body; rendering is deterministic (no model in the draw path).
+- Service wiring (`service/report.go`): ReportState fns over the durable store
+  (cue tasks + statuses, scratchpad board) + live fleet states.
+- PWA: `renderReply` extracts `<diagram>` blocks from a concierge bubble and
+  renders the SVG inline (styles.css .msg .diagram).
+
+Remaining (icebox-grade):
+- Reports section in the PWA listing `~/.yscr/reports/` artifacts (openable,
+  downloadable) — today the path is in the chat reply.
+- Mermaid-in-markdown as an alternative renderer for non-SVG surfaces.
+- Diagram of the open-questions → task dependency links.

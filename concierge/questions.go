@@ -35,8 +35,8 @@ var questionToolDefs = []llm.ToolDef{
 	}, "question")),
 	toolDef("list_questions", "List open questions awaiting the user. Use when the user asks what you need from them.", objSchema(map[string]any{})),
 	toolDef("answer_question", "Record the user's answer to an open question (by its id from list_questions) and unblock the work it was holding. Use when the user answers one of your parked questions.", objSchema(map[string]any{
-		"id":      strProp("the question id"),
-		"answer":  strProp("the user's answer, in their words"),
+		"id":     strProp("the question id"),
+		"answer": strProp("the user's answer, in their words"),
 	}, "id", "answer")),
 }
 

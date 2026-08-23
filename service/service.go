@@ -115,6 +115,13 @@ func New(cfg *config.Config) (*Server, error) {
 		s.conc.WithTasks(pg)
 		s.conc.WithQuestions(&pgQuestions{pg})
 	}
+	// Diagrams & reports: deterministic renderers over the validated state.
+	s.conc.WithReports(concierge.ReportState{
+		CueTasks: s.cueTaskGraph,
+		WorkList: s.workListReport,
+		Fleet:    s.fleetReport,
+	})
+
 	// Run & watch: the terminal pane source spawns shell windows; foreground
 	// waits poll State until the shell is idle-at-prompt again.
 	for _, src := range sources {

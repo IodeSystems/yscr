@@ -72,7 +72,7 @@ func fleetStatusCall() *llm.ToolCall {
 func TestConverse_DrivesSource(t *testing.T) {
 	fs := &fakeSource{}
 	runner := &scriptRunner{turns: [][]llm.StreamChunk{
-		{{ToolCall: fleetStatusCall()}}, // turn 1: call the tool
+		{{ToolCall: fleetStatusCall()}},           // turn 1: call the tool
 		{{Content: "One task running: Ship it."}}, // turn 2: reply
 	}}
 	c := New(runner, store.NewMem(), fs)

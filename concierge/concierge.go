@@ -19,8 +19,8 @@ import (
 	"github.com/iodesystems/agentkit/llm"
 
 	"github.com/iodesystems/yscr/questions"
-	"github.com/iodesystems/yscr/source"
 	"github.com/iodesystems/yscr/scratchpad"
+	"github.com/iodesystems/yscr/source"
 )
 
 // Concierge holds the registered sources + the LLM plumbing for one membrane.
@@ -49,6 +49,9 @@ type Concierge struct {
 	// poller. Nil until WithRun is called (no terminal panes enabled).
 	runSpawner source.Source
 	runWait    func(ctx context.Context, ref source.SessionRef) (string, error)
+
+	// Diagrams & reports (render_diagram / write_report).
+	report ReportState
 }
 
 // New builds a concierge over a runner (the swappable LLM endpoint), a store
@@ -117,6 +120,9 @@ func (c *Concierge) session(sessionID string) *agent.Session {
 	}
 	if c.runSpawner != nil {
 		tools = append(tools, runToolDef)
+	}
+	if c.report.CueTasks != nil || c.report.Fleet != nil {
+		tools = append(tools, reportToolDefs...)
 	}
 	return &agent.Session{
 		SessionID:  sessionID,
@@ -198,6 +204,10 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 
 	if isQuestionTool(tc.Function.Name) {
 		return c.questionDispatch(ctx, tc.Function.Name, args), nil
+	}
+
+	if isReportTool(tc.Function.Name) {
+		return c.reportDispatch(ctx, tc.Function.Name, args), nil
 	}
 
 	switch tc.Function.Name {

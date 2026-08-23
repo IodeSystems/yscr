@@ -14,7 +14,7 @@ import (
 // gateRunner records the last user message of each turn and blocks the FIRST
 // turn on a gate so a test can enqueue more work mid-turn.
 type gateRunner struct {
-	users   []string      // last user content per turn, in call order (worker is single-threaded)
+	users   []string // last user content per turn, in call order (worker is single-threaded)
 	n       int
 	started chan struct{} // closed when the first turn enters ChatStream
 	gate    chan struct{} // the first turn blocks here until closed

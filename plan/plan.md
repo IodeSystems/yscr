@@ -36,7 +36,7 @@ checks; the concierge only mediates (read-back → confirm → call `Act`).
 |---|---|---|
 | `plan/scratchpad.md` | user-facing tasks/todos/schedules + run & watch commands | ✅ core done (polish open) |
 | `plan/goal-plans.md` | goal → dependency graph, open-questions queue, work-around-ambiguity | ✅ core done |
-| `plan/reports.md` | diagrams + detailed reports on request | ◻ |
+| `plan/reports.md` | diagrams + detailed reports on request | ✅ core done |
 | `plan/decision-memory.md` | decision log, preference auto-resolve | ◻ |
 | `plan/audio.md` | medium-aware verbosity, ambient narration, streaming STT live drive | ◐ |
 | `plan/ops.md` | systemd unit, durable session registries, optional auth | ◻ |

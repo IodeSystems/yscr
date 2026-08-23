@@ -51,7 +51,7 @@ async function send(message, voice) {
     });
     const { reply } = await r.json();
     pending.classList.remove("thinking");
-    pending.textContent = reply || "(no reply)";
+    renderReply(pending, reply);
     // Don't start TTS while the user is actively speaking a new utterance —
     // it would play over their voice. speak() re-checks after its async fetch.
     if (speakOn && reply && !userSpeaking()) speak(reply);
@@ -469,6 +469,24 @@ async function submitAnswer(card, s, q, answers) {
     }
     err.textContent = "couldn't submit: " + e.message;
   }
+}
+
+// renderReply fills a concierge bubble. A <diagram>…</diagram> block carries
+// an inline SVG (render_diagram tool); everything else is plain text — the
+// diagram renders as an image, its caption stays spoken/text.
+function renderReply(el, reply) {
+  const text = reply || "(no reply)";
+  const m = text.match(/<diagram>([\s\S]*?)<\/diagram>/);
+  if (!m) { el.textContent = text; return; }
+  el.innerHTML = "";
+  const pre = text.slice(0, m.index).trim();
+  if (pre) el.append(Object.assign(document.createElement("div"), { textContent: pre }));
+  const svg = document.createElement("div");
+  svg.className = "diagram";
+  svg.innerHTML = m[1]; // server-rendered SVG from the deterministic renderer
+  el.append(svg);
+  const post = text.slice(m.index + m[0].length).trim();
+  if (post) el.append(Object.assign(document.createElement("div"), { textContent: post }));
 }
 
 function escape(s) {
