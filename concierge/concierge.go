@@ -41,6 +41,10 @@ type Concierge struct {
 	tasks       scratchpad.Store
 	taskToolsOn bool
 
+	// Decision-log capture hook (nil until SetDecisionLog; both answer paths
+	// record through it so the log is complete).
+	logDecisions func(q *source.Questionnaire, answers map[string]any, ctxLabel string)
+
 	// Open-questions queue (work-around-ambiguity; nil without a durable store).
 	questions       questions.QuestionsStore
 	questionToolsOn bool
@@ -380,6 +384,9 @@ func (c *Concierge) answerQuestionnaire(ctx context.Context, sourceID, id, qid s
 	})
 	if err != nil {
 		return fmt.Sprintf("submit failed: %v", err)
+	}
+	if c.logDecisions != nil {
+		c.logDecisions(q, answers, sourceID+"·"+id+" (concierge)")
 	}
 	return res
 }

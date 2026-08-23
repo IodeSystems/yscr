@@ -74,6 +74,7 @@ async function loadFleet() {
     const { sessions } = await r.json();
     renderQuestions(sessions);
     loadOpenQuestions();
+    loadDecisions();
     loadTasks();
     box.innerHTML = "";
     if (!sessions || !sessions.length) {
@@ -1041,6 +1042,41 @@ if (!connectStream()) {
   setInterval(loadFleet, 15000); // fallback poll where SSE is unavailable
 }
 
+// ── decision log ("what have I decided") ───────────────────────────
+// Read-only: the concierge records every answered questionnaire here; open
+// decisions are what auto-resolve later questions. Newest first, open first.
+async function loadDecisions() {
+  const box = $("#decisions");
+  let ds = [];
+  try {
+    const r = await api("/api/decisions");
+    if (r.ok) ds = (await r.json()).decisions || [];
+  } catch (e) { return; }
+  const shown = ds.filter((d) => d.status === "open").slice(0, 12);
+  if (!shown.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="secthead">Decisions I remember</div>`;
+  for (const d of shown) {
+    const card = document.createElement("div");
+    card.className = "qcard";
+    const head = document.createElement("div");
+    head.className = "qhead";
+    head.textContent = new Date(d.created_at * 1000).toLocaleDateString();
+    card.append(head);
+    const qtext = document.createElement("div");
+    qtext.className = "qtext";
+    qtext.textContent = (d.question || d.field) + " → " + d.answer;
+    card.append(qtext);
+    if (d.context) {
+      const note = document.createElement("div");
+      note.className = "qnote";
+      note.textContent = d.context;
+      card.append(note);
+    }
+    box.append(card);
+  }
+}
+
 // ── open questions (concierge's parked ambiguities) ────────────────
 // The work-around-ambiguity queue: questions the concierge parked while it kept
 // working. Answer by tap (POST /api/questions/{id}/answer — no LLM) or in chat.
@@ -1087,7 +1123,7 @@ function openQuestionCard(q) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ answer: v }),
-    }).then(() => loadOpenQuestions()).catch((e) => showStatus("error: " + e.message));
+    }).then(() => { loadOpenQuestions(); loadDecisions(); }).catch((e) => showStatus("error: " + e.message));
   };
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
   const btn = document.createElement("button");

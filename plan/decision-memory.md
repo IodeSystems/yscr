@@ -28,4 +28,28 @@ the inference ("answered X because you chose Y on <date>, session Z").
   silently deleted.
 
 ## Status
-◻ todo — not started.
+✅ **core done.**
+
+- ✅ **`decisions/` package** — `Decision`, `KeyFor` (sha256[:16] of normalized
+  question+field; case/whitespace-stable), `Store` interface, `Resolve`
+  (deterministic exact-match auto-resolve with provenance lines), `Mem` impl.
+  Import-free of the rest of the repo (same posture as reports).
+- ✅ **Postgres** — `decisions` table (partial index on question_key WHERE
+  status='open'); `AddDecision` supersedes open rows for the same key
+  (append-only + supersede, never deleted); `OpenDecision`, `ListDecisions`.
+- ✅ **Capture (both paths)** — `service.logAnswers` records every field of an
+  answered questionnaire; called from `handleAnswer` (PWA tap) AND via
+  `Concierge.SetDecisionLog` hook after the tool-path `Act` succeeds. Context
+  labels which path + source·session. Best-effort: logging never fails the
+  answer.
+- ✅ **Persona rule** — DefaultSystem: before re-asking a question that has
+  been asked before, assume the recorded answer and say so in one line; only
+  re-ask when the situation clearly differs. (LLM-judged near-match = proposed,
+  not applied — conservative by default, per the design constraint.)
+- ✅ **PWA + HTTP** — `GET /api/decisions`; "Decisions I remember" section
+  (open decisions, newest first, capped 12), refreshed after tap-to-answer.
+
+**Remaining (optional):** LLM-judged near-match auto-resolve as a distinct
+proposed-then-confirmed path (today the persona does this conversationally —
+no separate store entry); conversational recall tool ("why did you pick EU?" →
+`list_decisions` tool).

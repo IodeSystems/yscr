@@ -15,7 +15,8 @@ import (
 	"github.com/iodesystems/agentkit/llm"
 
 	"github.com/iodesystems/yscr/scratchpad"
-)
+
+	"github.com/iodesystems/yscr/source")
 
 // WithTasks attaches the scratchpad tools. A nil store leaves the toolset
 // unchanged (no DSN → no durable work-list).
@@ -172,4 +173,12 @@ func isTaskTool(name string) bool {
 		return true
 	}
 	return false
+}
+
+// SetDecisionLog attaches the decision-log capture hook: called after every
+// successful questionnaire submit, so both answer paths (concierge tool and
+// PWA tap-to-answer) record identically.
+func (c *Concierge) SetDecisionLog(fn func(q *source.Questionnaire, answers map[string]any, ctxLabel string)) *Concierge {
+	c.logDecisions = fn
+	return c
 }

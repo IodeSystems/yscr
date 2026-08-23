@@ -18,3 +18,4 @@
 - **Scratchpad — todos + schedules** (`c7bd92a`) — scratchpad pkg (Task/Store, cron), Postgres store, concierge task tools, /api/tasks + PWA work list, scheduler tick (one-shots → cue; cron re-arm).
 - **Scratchpad — run & watch** (`79dbc86`) — terminal adapter Spawn (detached sh window) + run_command tool (foreground bounded wait-for-idle + output tail; background pane id).
 - **Diagrams & reports on request** — `reports/` SVG renderer (task dep graph / fleet map / work list), concierge `render_diagram` + `write_report` tools, reports persisted to ~/.yscr/reports/, PWA inline-SVG bubbles.
+- **Decision memory** — decisions/ package (KeyFor exact-match, Resolve with provenance, Mem); Postgres decisions table (append-only + supersede); capture on BOTH answer paths (tap + concierge tool); persona rule; PWA "Decisions I remember" + GET /api/decisions.

@@ -114,6 +114,7 @@ func New(cfg *config.Config) (*Server, error) {
 		s.pad = pg
 		s.conc.WithTasks(pg)
 		s.conc.WithQuestions(&pgQuestions{pg})
+		s.conc.SetDecisionLog(s.logAnswers)
 	}
 	// Diagrams & reports: deterministic renderers over the validated state.
 	s.conc.WithReports(concierge.ReportState{
@@ -156,6 +157,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/tasks/{id}/done", s.handleTaskDone)
 	mux.HandleFunc("GET /api/questions", s.handleQuestions)
 	mux.HandleFunc("POST /api/questions/{id}/answer", s.handleQuestionAnswer)
+	mux.HandleFunc("GET /api/decisions", s.handleDecisions)
 	mux.HandleFunc("POST /api/answer", s.handleAnswer)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -303,6 +305,7 @@ func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
+	s.logAnswers(q, in.Answers, in.Source+"·"+in.ID+" (tap-to-answer)")
 	s.broadcastFleet()
 	writeJSON(w, http.StatusOK, map[string]any{"result": res})
 }
@@ -344,6 +347,29 @@ func (a *pgQuestions) List(ctx context.Context) ([]questions.Question, error) {
 }
 func (a *pgQuestions) Answer(ctx context.Context, id, answer string) (bool, error) {
 	return a.pg.AnswerQuestion(ctx, id, answer)
+}
+
+// handleDecisions lists the decision log newest-first (the PWA's "what have I
+// decided" view). Open decisions first within their status.
+func (s *Server) handleDecisions(w http.ResponseWriter, r *http.Request) {
+	if s.pad == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"decisions": []any{}})
+		return
+	}
+	st := &pgDecisions{pg: s.pad.(*store.PG)}
+	ds, err := st.List()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	out := make([]map[string]any, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, map[string]any{
+			"id": d.ID, "question": d.Question, "field": d.Field, "answer": d.Answer,
+			"context": d.Context, "status": string(d.Status), "created_at": d.CreatedAt.Unix(),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"decisions": out})
 }
 
 // handleQuestions lists the open-questions queue (open first, oldest — they've

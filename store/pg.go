@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -72,6 +73,21 @@ CREATE INDEX IF NOT EXISTS cue_pending ON cue_tasks (priority DESC, created_at) 
 CREATE UNIQUE INDEX IF NOT EXISTS cue_dedupe_live ON cue_tasks (dedupe_key)
 	WHERE status IN ('pending','inflight') AND dedupe_key <> '';`
 
+
+const decisionsSchema = `
+CREATE TABLE IF NOT EXISTS decisions (
+	id             text   PRIMARY KEY,
+	question_key   text   NOT NULL,          -- sha256[:16] of normalized question+field
+	question       text   NOT NULL DEFAULT '',
+	field          text   NOT NULL DEFAULT '',
+	answer         text   NOT NULL,
+	context        text   NOT NULL DEFAULT '',
+	status         text   NOT NULL DEFAULT 'open',  -- open | superseded
+	superseded_by  text   NOT NULL DEFAULT '',
+	created_at     bigint NOT NULL
+);
+CREATE INDEX IF NOT EXISTS decisions_open ON decisions (question_key) WHERE status='open';`
+
 const questionsSchema = `
 CREATE TABLE IF NOT EXISTS open_questions (
 	id          text   PRIMARY KEY,
@@ -93,7 +109,7 @@ func NewPG(ctx context.Context, dsn string) (*PG, error) {
 	if err != nil {
 		return nil, fmt.Errorf("yscr/store: connect: %w", err)
 	}
-	for _, stmt := range []string{pgSchema, scratchpadSchema, questionsSchema} {
+	for _, stmt := range []string{pgSchema, scratchpadSchema, questionsSchema, decisionsSchema} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			pool.Close()
 			return nil, fmt.Errorf("yscr/store: migrate: %w", err)
@@ -561,4 +577,91 @@ func (p *PG) AnswerQuestion(ctx context.Context, id, answer string) (bool, error
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ── decisions (decision log) ────────────────────────────────────────
+
+type Decision struct {
+	ID           string
+	QuestionKey  string
+	Question     string
+	Field        string
+	Answer       string
+	Context      string
+	Status       string
+	SupersededBy string
+	CreatedAt    int64
+}
+
+// AddDecision records a decision and supersedes any open one for the same
+// question key. Append-only: superseded rows stay (the log is auditable).
+func (pg *PG) AddDecision(ctx context.Context, d Decision) (Decision, error) {
+	if d.ID == "" {
+		d.ID = uuid.NewString()
+	}
+	if d.CreatedAt == 0 {
+		d.CreatedAt = time.Now().Unix()
+	}
+	if d.Status == "" {
+		d.Status = "open"
+	}
+	_, err := pg.pool.Exec(ctx,
+		`UPDATE decisions SET status='superseded', superseded_by=$1
+		 WHERE question_key=$2 AND status='open'`, d.ID, d.QuestionKey)
+	if err != nil {
+		return Decision{}, fmt.Errorf("yscr/store: supersede decision: %w", err)
+	}
+	err = pg.pool.QueryRow(ctx,
+		`INSERT INTO decisions (id, question_key, question, field, answer, context, status, created_at)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+		d.ID, d.QuestionKey, d.Question, d.Field, d.Answer, d.Context, d.Status, d.CreatedAt).Scan(&d.ID)
+	if err != nil {
+		return Decision{}, fmt.Errorf("yscr/store: add decision: %w", err)
+	}
+	return d, nil
+}
+
+// OpenDecision returns the current (open) decision for a question key.
+func (pg *PG) OpenDecision(ctx context.Context, questionKey string) (Decision, bool, error) {
+	var d Decision
+	err := pg.pool.QueryRow(ctx,
+		`SELECT id, question_key, question, field, answer, context, status, superseded_by, created_at
+		 FROM decisions WHERE question_key=$1 AND status='open' LIMIT 1`,
+		questionKey).Scan(&d.ID, &d.QuestionKey, &d.Question, &d.Field, &d.Answer, &d.Context, &d.Status, &d.SupersededBy, &d.CreatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return Decision{}, false, nil
+		}
+		return Decision{}, false, fmt.Errorf("yscr/store: open decision: %w", err)
+	}
+	return d, true, nil
+}
+
+// ListDecisions returns decisions newest-first; empty statuses means all.
+func (pg *PG) ListDecisions(ctx context.Context, statuses ...string) ([]Decision, error) {
+	q := `SELECT id, question_key, question, field, answer, context, status, superseded_by, created_at FROM decisions`
+	var args []any
+	if len(statuses) > 0 {
+		clauses := make([]string, len(statuses))
+		for i, st := range statuses {
+			clauses[i] = fmt.Sprintf("$%d", i+1)
+			args = append(args, st)
+		}
+		q += " WHERE status IN (" + strings.Join(clauses, ",") + ")"
+	}
+	q += " ORDER BY created_at DESC"
+	rows, err := pg.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("yscr/store: list decisions: %w", err)
+	}
+	defer rows.Close()
+	var out []Decision
+	for rows.Next() {
+		var d Decision
+		if err := rows.Scan(&d.ID, &d.QuestionKey, &d.Question, &d.Field, &d.Answer, &d.Context, &d.Status, &d.SupersededBy, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("yscr/store: scan decision: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
