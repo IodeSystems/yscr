@@ -201,3 +201,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .dq-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .dq-opt { border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 12px; color: var(--muted); }
 .dq-note { color: var(--muted); font-size: 12px; font-style: italic; margin-top: 8px; }
+
+/* work list (scratchpad) */
+#tasks .secthead { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 8px 0 4px; }
+#tasks .sectsub { font-size: 11px; color: var(--muted); margin: 6px 0 2px; }
+.taskcard { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; margin-bottom: 4px; background: var(--panel, transparent); }
+.taskcard.done { opacity: .55; }
+.taskhead { display: flex; gap: 6px; align-items: baseline; }
+.taskhead .kind { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; flex: 0 0 auto; }
+.taskhead .kind.cue { color: var(--warn, #c9a227); }
+.tprompt { font-size: 13px; overflow-wrap: anywhere; }
+.taskmeta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.taskdone { margin-top: 4px; font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
+.taskdone:active { opacity: .6; }

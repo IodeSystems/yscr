@@ -151,6 +151,9 @@ func (s *Server) watch(ctx context.Context) {
 			if s.cue != nil {
 				s.cue.tick(ctx, states) // reconcile completions + release new (gated by Cue.Enabled)
 			}
+			if s.sched != nil {
+				s.sched.tick(ctx) // re-arm cron tasks + promote due one-shots into the cue
+			}
 			cur := make(map[string]snap, len(states))
 			changed := false
 			for _, st := range states {

@@ -19,6 +19,7 @@ import (
 	"github.com/iodesystems/agentkit/llm"
 
 	"github.com/iodesystems/yscr/source"
+	"github.com/iodesystems/yscr/scratchpad"
 )
 
 // Concierge holds the registered sources + the LLM plumbing for one membrane.
@@ -34,6 +35,10 @@ type Concierge struct {
 	// follow-up turn.
 	qmu    sync.Mutex
 	queues map[string]*sessQueue
+
+	// Scratchpad work-list (nil when no durable store — task tools stay off).
+	tasks       scratchpad.Store
+	taskToolsOn bool
 }
 
 // New builds a concierge over a runner (the swappable LLM endpoint), a store
@@ -93,12 +98,16 @@ func (c *Concierge) runTurn(ctx context.Context, sessionID, userMessage string) 
 }
 
 func (c *Concierge) session(sessionID string) *agent.Session {
+	tools := conciergeTools
+	if c.taskToolsOn {
+		tools = append(append([]llm.ToolDef{}, conciergeTools...), taskToolDefs...)
+	}
 	return &agent.Session{
 		SessionID:  sessionID,
 		System:     c.system,
 		Store:      c.store,
 		Runner:     c.runner,
-		Tools:      conciergeTools,
+		Tools:      tools,
 		Dispatch:   c.dispatch,
 		SpanPrefix: "concierge",
 	}
@@ -166,6 +175,10 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 		}
 	}
 	str := func(k string) string { s, _ := args[k].(string); return s }
+
+	if isTaskTool(tc.Function.Name) {
+		return c.taskDispatch(ctx, tc.Function.Name, args), nil
+	}
 
 	switch tc.Function.Name {
 	case "fleet_status":

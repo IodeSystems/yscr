@@ -3,12 +3,15 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/iodesystems/agentkit/agent"
 	"github.com/iodesystems/yscr/cue"
+	"github.com/iodesystems/yscr/scratchpad"
 )
 
 // PG is a Postgres-backed agent.Store (durable concierge conversation) that
@@ -72,9 +75,11 @@ func NewPG(ctx context.Context, dsn string) (*PG, error) {
 	if err != nil {
 		return nil, fmt.Errorf("yscr/store: connect: %w", err)
 	}
-	if _, err := pool.Exec(ctx, pgSchema); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("yscr/store: migrate: %w", err)
+	for _, stmt := range []string{pgSchema, scratchpadSchema} {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("yscr/store: migrate: %w", err)
+		}
 	}
 	return &PG{pool: pool}, nil
 }
@@ -299,4 +304,150 @@ func (p *PG) setStatus(ctx context.Context, id, to, from, tsCol string, ts int64
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+// ── scratchpad (user todos / scheduled tasks) ───────────────────────
+//
+// The user-facing work-list lives in its own table (scratchpad_tasks), not
+// cue_tasks: it has a kind, scheduling (run_at/cron), and notes the scheduler
+// doesn't need. A promoted todo is copied into cue_tasks by the release path,
+// so the two pipelines share dispatch without sharing rows.
+
+const scratchpadSchema = `
+CREATE TABLE IF NOT EXISTS scratchpad_tasks (
+	id             text   PRIMARY KEY,
+	dedupe_key     text   NOT NULL DEFAULT '',
+	prompt         text   NOT NULL,
+	kind           text   NOT NULL DEFAULT 'todo', -- todo | cue | command
+	priority       int    NOT NULL DEFAULT 0,
+	target_source  text   NOT NULL DEFAULT '',
+	target_session text   NOT NULL DEFAULT '',
+	target_spawn   bool   NOT NULL DEFAULT false,
+	target_dir     text   NOT NULL DEFAULT '',
+	status         text   NOT NULL DEFAULT 'pending', -- pending | inflight | done | failed | completed
+	run_at         bigint NOT NULL DEFAULT 0,
+	cron           text   NOT NULL DEFAULT '',
+	notes          jsonb  NOT NULL DEFAULT '[]',
+	created_at     bigint NOT NULL,
+	done_at        bigint NOT NULL DEFAULT 0
+);
+-- One live task per dedupe identity: dedupe_key='' opts out.
+CREATE UNIQUE INDEX IF NOT EXISTS scratchpad_dedupe_live ON scratchpad_tasks (dedupe_key)
+	WHERE status IN ('pending','inflight') AND dedupe_key <> '';`
+
+// Add inserts a pending scratchpad task. No-op (nil, nil) when the prompt is
+// empty or a live task already shares its non-empty DedupeKey — so the model
+// can re-propose freely without duplicating work.
+func (p *PG) Add(ctx context.Context, t scratchpad.Task) (*scratchpad.Task, error) {
+	t = scratchpad.Normalize(t)
+	if t.Prompt == "" {
+		return nil, nil
+	}
+	tag, err := p.pool.Exec(ctx,
+		`INSERT INTO scratchpad_tasks
+		   (id, dedupe_key, prompt, kind, priority, target_source, target_session, target_spawn, target_dir, status, run_at, cron, created_at)
+		 SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10,$11,$12
+		 WHERE $2 = '' OR NOT EXISTS (
+		   SELECT 1 FROM scratchpad_tasks WHERE dedupe_key=$2 AND status IN ('pending','inflight'))
+		 ON CONFLICT (id) DO NOTHING`,
+		t.ID, t.DedupeKey, t.Prompt, string(t.Kind), t.Priority,
+		t.Target.Source, t.Target.SessionID, t.Target.Spawn, t.Target.SpawnDir,
+		t.RunAt, t.Cron, t.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, nil // dedupe no-op
+	}
+	out := t
+	return &out, nil
+}
+
+// List returns scratchpad tasks matching kinds (empty = all): open first
+// (pending, then inflight), newest-first within each band; closed after.
+func (p *PG) List(ctx context.Context, kinds ...scratchpad.TaskKind) ([]scratchpad.Task, error) {
+	where := ""
+	args := []any{}
+	if len(kinds) > 0 {
+		ph := make([]string, len(kinds))
+		for i, k := range kinds {
+			ph[i] = fmt.Sprintf("$%d", i+1)
+			args = append(args, string(k))
+		}
+		where = " WHERE kind IN (" + strings.Join(ph, ",") + ")"
+	}
+	rows, err := p.pool.Query(ctx,
+		`SELECT id, dedupe_key, prompt, kind, priority, target_source, target_session,
+		        target_spawn, target_dir, status, run_at, cron, created_at
+		 FROM scratchpad_tasks`+where+`
+		 ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'inflight' THEN 1 ELSE 2 END,
+		          created_at DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []scratchpad.Task
+	for rows.Next() {
+		var t scratchpad.Task
+		var kind string
+		var status string
+		if err := rows.Scan(&t.ID, &t.DedupeKey, &t.Prompt, &kind, &t.Priority,
+			&t.Target.Source, &t.Target.SessionID, &t.Target.Spawn, &t.Target.SpawnDir,
+			&status, &t.RunAt, &t.Cron, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		t.Kind = scratchpad.TaskKind(kind)
+		t.Status = scratchpad.Status(status)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// Complete closes a task (done or failed). Status-guarded on live states so a
+// double-complete is a no-op; returns false for unknown ids too.
+func (p *PG) Complete(ctx context.Context, id string, done bool) (bool, error) {
+	to := string(scratchpad.StatusCompleted)
+	if !done {
+		to = string(scratchpad.StatusFailed)
+	}
+	tag, err := p.pool.Exec(ctx,
+		`UPDATE scratchpad_tasks SET status=$1, done_at=$2
+		 WHERE id=$3 AND status IN ('pending','inflight')`,
+		to, time.Now().UnixNano(), id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// Note appends a free-form note to the task's notes array. False for unknown ids.
+func (p *PG) Note(ctx context.Context, id, note string) (bool, error) {
+	tag, err := p.pool.Exec(ctx,
+		`UPDATE scratchpad_tasks SET notes = notes || to_jsonb($1::text) WHERE id=$2`,
+		note, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// Get returns one task by id (nil, nil when absent).
+func (p *PG) Get(ctx context.Context, id string) (*scratchpad.Task, error) {
+	row := p.pool.QueryRow(ctx,
+		`SELECT id, dedupe_key, prompt, kind, priority, target_source, target_session,
+		        target_spawn, target_dir, status, run_at, cron, created_at
+		 FROM scratchpad_tasks WHERE id=$1`, id)
+	var t scratchpad.Task
+	var kind, status string
+	if err := row.Scan(&t.ID, &t.DedupeKey, &t.Prompt, &kind, &t.Priority,
+		&t.Target.Source, &t.Target.SessionID, &t.Target.Spawn, &t.Target.SpawnDir,
+		&status, &t.RunAt, &t.Cron, &t.CreatedAt); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	t.Kind = scratchpad.TaskKind(kind)
+	t.Status = scratchpad.Status(status)
+	return &t, nil
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/iodesystems/yscr/plugins/pane"
 	"github.com/iodesystems/yscr/plugins/pane/claude"
 	"github.com/iodesystems/yscr/plugins/pane/terminal"
+	"github.com/iodesystems/yscr/scratchpad"
 	"github.com/iodesystems/yscr/source"
 	"github.com/iodesystems/yscr/store"
 	"github.com/iodesystems/yscr/web"
@@ -38,6 +39,8 @@ type Server struct {
 	narrations *narrateHub
 	cue        *cueRunner    // nil unless Cue.Enabled + a durable store
 	cuegen     *cueGenerator // nil unless Cue.Enabled + store + goals
+	sched      *scheduler       // nil unless there's a durable store (scratchpad tick)
+	pad        scratchpad.Store // work list behind /api/tasks + the concierge task tools; nil without Postgres
 	sessionID  string
 }
 
@@ -98,6 +101,17 @@ func New(cfg *config.Config) (*Server, error) {
 	if cfg.Cue.Enabled && pg != nil {
 		s.cuegen = newCueGenerator(configCueGen{Goals: cfg.Cue.Goals, GenInterval: cfg.Cue.GenInterval}, runner, pg, s.fleetStates)
 	}
+	// Scratchpad scheduler tick (re-arm cron tasks, promote due one-shots into
+	// the cue). Needs the durable store for both sides.
+	s.sched = newScheduler(pg, pg, func(title, body string) {
+		s.broadcastFleet()
+		s.Notify(title, body)
+	})
+	// Attach the scratchpad tools to the concierge (no-op when no durable store).
+	if pg != nil {
+		s.pad = pg
+		s.conc.WithTasks(pg)
+	}
 	return s, nil
 }
 
@@ -120,6 +134,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/converse", s.handleConverse)
 	mux.HandleFunc("GET /api/fleet", s.handleFleet)
+	mux.HandleFunc("GET /api/tasks", s.handleTasks)
+	mux.HandleFunc("POST /api/tasks/{id}/done", s.handleTaskDone)
 	mux.HandleFunc("POST /api/answer", s.handleAnswer)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -176,6 +192,47 @@ func (s *Server) handleFleet(w http.ResponseWriter, r *http.Request) {
 // live questionnaire, validates against it (same path as the concierge tool),
 // then Acts and nudges the fleet. The concierge conversation is the other way
 // to answer; this is the visual/tap path.
+// handleTasks lists the work list (scratchpad): open tasks first, then recent
+// closed ones. ?kind=todo|cue|command filters. The PWA renders it as a section;
+// completing a todo is a tap away (POST /api/tasks/{id}/done).
+func (s *Server) handleTasks(w http.ResponseWriter, r *http.Request) {
+	if s.pad == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"tasks": []any{}})
+		return
+	}
+	var kinds []scratchpad.TaskKind
+	if k := r.URL.Query().Get("kind"); k != "" {
+		kinds = append(kinds, scratchpad.TaskKind(k))
+	}
+	tasks, err := s.pad.List(r.Context(), kinds...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tasks": tasks})
+}
+
+// handleTaskDone marks one task done (todo tap-to-complete) or failed.
+func (s *Server) handleTaskDone(w http.ResponseWriter, r *http.Request) {
+	if s.pad == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no durable store"})
+		return
+	}
+	id := r.PathValue("id")
+	done := r.URL.Query().Get("status") != "failed"
+	ok, err := s.pad.Complete(r.Context(), id, done)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "task not open"})
+		return
+	}
+	s.broadcastFleet() // the PWA reloads tasks with the fleet
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Source          string         `json:"source"`

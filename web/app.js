@@ -73,6 +73,7 @@ async function loadFleet() {
     const r = await api("/api/fleet");
     const { sessions } = await r.json();
     renderQuestions(sessions);
+    loadTasks();
     box.innerHTML = "";
     if (!sessions || !sessions.length) {
       box.innerHTML = '<div class="empty">Nothing active across any source.</div>';
@@ -106,6 +107,64 @@ async function loadFleet() {
   } catch (e) {
     box.innerHTML = `<div class="empty">fleet unavailable (${e.message})</div>`;
   }
+}
+
+// ── work list (scratchpad) ──────────────────────────────────────────
+// The durable task list: todos, scheduled reminders, and promoted cue work.
+// Open tasks first; a todo completes on one tap (POST /api/tasks/{id}/done).
+async function loadTasks() {
+  const box = $("#tasks");
+  let tasks = [];
+  try {
+    const r = await api("/api/tasks");
+    if (r.ok) tasks = (await r.json()).tasks || [];
+  } catch (e) { /* no store → nothing to show */ return; }
+  const open = tasks.filter((t) => t.Status === "pending" || t.Status === "inflight");
+  const closed = tasks.filter((t) => !["pending", "inflight"].includes(t.Status)).slice(0, 5);
+  if (!tasks.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="secthead">Work list</div>`;
+  for (const t of open) box.append(taskCard(t));
+  if (closed.length) {
+    const sub = document.createElement("div");
+    sub.className = "sectsub";
+    sub.textContent = "recently closed";
+    box.append(sub);
+    for (const t of closed) box.append(taskCard(t, true));
+  }
+}
+
+function taskCard(t, closedRow = false) {
+  const card = document.createElement("div");
+  card.className = "taskcard" + (closedRow ? " done" : "");
+  const when = [];
+  if (t.Cron) when.push("⟳ " + t.Cron);
+  if (t.RunAt) when.push(new Date(t.RunAt / 1e6).toLocaleString());
+  const dest = t.Target && (t.Target.Source || t.Target.SessionID)
+    ? ` → ${t.Target.Source || ""}${t.Target.SessionID ? " · " + t.Target.SessionID : ""}${t.Target.Spawn ? " (new)" : ""}`
+    : "";
+  const head = document.createElement("div");
+  head.className = "taskhead";
+  head.innerHTML = `<span class="kind ${t.Kind}">${escape(t.Kind)}</span>` +
+    `<span class="tprompt">${escape(t.Prompt)}</span>`;
+  card.append(head);
+  const meta = document.createElement("div");
+  meta.className = "taskmeta";
+  meta.textContent = [...when, t.Status === "inflight" ? "running" : "", dest].filter(Boolean).join(" · ");
+  if (meta.textContent) card.append(meta);
+  if (!closedRow && t.Kind === "todo") {
+    const done = document.createElement("button");
+    done.className = "taskdone";
+    done.textContent = "✓ done";
+    done.addEventListener("click", async () => {
+      try {
+        await api("/api/tasks/" + t.ID + "/done", { method: "POST" });
+        loadTasks();
+      } catch (e) { showStatus("error: " + e.message); }
+    });
+    card.append(done);
+  }
+  return card;
 }
 
 // ── project detail sheet ────────────────────────────────────────────
