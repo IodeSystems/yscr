@@ -14,7 +14,9 @@ package terminal
 import (
 	"bytes"
 	"context"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,10 +85,13 @@ func (a *Adapter) State(ctx context.Context, s pane.Session, t pane.Tmux) (sourc
 	if shells[s.Program] {
 		status = source.StatusIdle
 	}
+	// Summary is the pane's scrollback tail — for a shell that IS the command
+	// output (a launched window has no prompt noise; adopted panes show recent
+	// history). Capture (viewport only) would miss long output.
 	summary := ""
 	if tgt, live := t.Target(ctx, s); live {
-		capr, _ := t.Capture(ctx, tgt)
-		summary = lastLines(capr, 3)
+		sb, _ := t.Scrollback(ctx, tgt, 40)
+		summary = lastLines(sb, 15)
 	}
 	return source.State{Ref: ref, Status: status, Summary: summary, UpdatedAt: a.now()}, nil
 }
@@ -197,9 +202,34 @@ func stripANSI(s string) string {
 	}, s)
 }
 
-// Spawn is unsupported — starting new work is claude's job, not a terminal's.
-func (a *Adapter) Spawn(context.Context, source.SpawnSpec, pane.Tmux) (pane.Session, error) {
-	return pane.Session{}, source.ErrUnsupported
+// Spawn starts a NEW shell window in spec.Dir (default: the user's home) and,
+// when spec.Prompt is set, types it as the first command — run & watch's seam.
+// The session id is hex time-based; the tmux driver names the window from it, so
+// Target resolves it again on every call (self-healing, like claude's spawns).
+func (a *Adapter) Spawn(ctx context.Context, spec source.SpawnSpec, t pane.Tmux) (pane.Session, error) {
+	sid := strconv.FormatInt(time.Now().UnixNano(), 16)
+	dir := spec.Dir
+	if dir == "" {
+		dir, _ = os.UserHomeDir()
+	}
+	name := "shell"
+	if spec.Title != "" {
+		name = spec.Title
+	}
+	s := pane.Session{Source: SourceID, ID: sid, Cwd: dir, Name: name}
+	tgt, err := t.Launch(ctx, s, dir, []string{"sh"})
+	if err != nil {
+		return pane.Session{}, err
+	}
+	if spec.Prompt != "" {
+		if err := t.SendKeys(ctx, tgt, "-l", spec.Prompt); err != nil {
+			return pane.Session{}, err
+		}
+		if err := t.SendKeys(ctx, tgt, "Enter"); err != nil {
+			return pane.Session{}, err
+		}
+	}
+	return s, nil
 }
 
 // Act is unsupported — terminals surface no questionnaires.

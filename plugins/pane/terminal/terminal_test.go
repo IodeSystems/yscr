@@ -19,7 +19,10 @@ type fakeTmux struct {
 	scrollback string
 	pipeCh     chan []byte // fed by the test; Pipe returns it
 	stopped    bool
+	launchDir  string
+	launchArgv []string
 }
+
 
 func (f *fakeTmux) Target(_ context.Context, s pane.Session) (string, bool) {
 	if t, ok := f.live[s.ID]; ok {
@@ -35,8 +38,10 @@ func (f *fakeTmux) SendKeys(_ context.Context, target string, keys ...string) er
 	f.calls = append(f.calls, append([]string{"send-keys", "-t", target}, keys...))
 	return nil
 }
-func (f *fakeTmux) Launch(context.Context, pane.Session, string, []string) (string, error) {
-	return "", nil
+func (f *fakeTmux) Launch(_ context.Context, s pane.Session, dir string, argv []string) (string, error) {
+	f.launchDir = dir
+	f.launchArgv = argv
+	return "yscr-cc-" + s.ID, nil
 }
 func (f *fakeTmux) Pipe(context.Context, string) (<-chan []byte, func(), error) {
 	if f.pipeCh == nil {
@@ -82,7 +87,7 @@ func TestDiscover_Empty(t *testing.T) {
 
 func TestState_ShellIdleRunningElse(t *testing.T) {
 	a := newT()
-	f := &fakeTmux{live: map[string]string{"%2": "work:1.0"}, capture: "$ ls\nfile.go\n$ "}
+	f := &fakeTmux{live: map[string]string{"%2": "work:1.0"}, scrollback: "$ ls\nfile.go\n$ "}
 	st, err := a.State(context.Background(), pane.Session{Source: SourceID, ID: "%2", Program: "fish"}, f)
 	if err != nil {
 		t.Fatal(err)
@@ -194,12 +199,60 @@ func TestStream_CtxCancelEnds(t *testing.T) {
 	}
 }
 
-func TestSpawnAct_Unsupported(t *testing.T) {
+func TestSpawn_LaunchesShellAndTypesCommand(t *testing.T) {
 	a := newT()
-	if _, err := a.Spawn(context.Background(), source.SpawnSpec{}, &fakeTmux{}); !errors.Is(err, source.ErrUnsupported) {
-		t.Errorf("Spawn err = %v; want ErrUnsupported", err)
+	f := &fakeTmux{}
+	s, err := a.Spawn(context.Background(), source.SpawnSpec{Title: "build", Dir: "/tmp/w", Prompt: "make all"}, f)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
 	}
+	if s.Source != SourceID || s.ID == "" || s.Cwd != "/tmp/w" || s.Name != "build" {
+		t.Errorf("session = %+v", s)
+	}
+	if f.launchDir != "/tmp/w" {
+		t.Errorf("launchDir = %q; want /tmp/w", f.launchDir)
+	}
+	if len(f.launchArgv) != 1 || f.launchArgv[0] != "sh" {
+		t.Errorf("launchArgv = %v; want [sh]", f.launchArgv)
+	}
+	want := [][]string{{"-l", "make all"}, {"Enter"}}
+	if len(f.calls) != 2 {
+		t.Fatalf("calls = %v; want 2 send-keys", f.calls)
+	}
+	for i, w := range want {
+		got := f.calls[i][len(f.calls[i])-len(w):] // the key tail after target
+		if !sameKeys(got, w) {
+			t.Errorf("call %d keys = %v; want %v", i, got, w)
+		}
+	}
+}
+
+func TestSpawn_DefaultsAndNoPrompt(t *testing.T) {
+	a := newT()
+	f := &fakeTmux{}
+	if _, err := a.Spawn(context.Background(), source.SpawnSpec{}, f); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("calls = %v; want none (no prompt)", f.calls)
+	}
+}
+
+func TestAct_Unsupported(t *testing.T) {
+	a := newT()
 	if _, err := a.Act(context.Background(), pane.Session{}, source.Action{}, &fakeTmux{}); !errors.Is(err, source.ErrUnsupported) {
 		t.Errorf("Act err = %v; want ErrUnsupported", err)
 	}
+}
+
+func sameKeys(got []string, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

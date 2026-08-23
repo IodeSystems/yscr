@@ -112,6 +112,14 @@ func New(cfg *config.Config) (*Server, error) {
 		s.pad = pg
 		s.conc.WithTasks(pg)
 	}
+	// Run & watch: the terminal pane source spawns shell windows; foreground
+	// waits poll State until the shell is idle-at-prompt again.
+	for _, src := range sources {
+		if src.ID() == "terminal" {
+			s.conc.WithRun(src, s.waitShellIdle)
+			break
+		}
+	}
 	return s, nil
 }
 

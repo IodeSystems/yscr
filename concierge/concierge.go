@@ -39,6 +39,11 @@ type Concierge struct {
 	// Scratchpad work-list (nil when no durable store — task tools stay off).
 	tasks       scratchpad.Store
 	taskToolsOn bool
+
+	// Run & watch (run_command): the shell-spawning source + a wait-for-idle
+	// poller. Nil until WithRun is called (no terminal panes enabled).
+	runSpawner source.Source
+	runWait    func(ctx context.Context, ref source.SessionRef) (string, error)
 }
 
 // New builds a concierge over a runner (the swappable LLM endpoint), a store
@@ -100,7 +105,10 @@ func (c *Concierge) runTurn(ctx context.Context, sessionID, userMessage string) 
 func (c *Concierge) session(sessionID string) *agent.Session {
 	tools := conciergeTools
 	if c.taskToolsOn {
-		tools = append(append([]llm.ToolDef{}, conciergeTools...), taskToolDefs...)
+		tools = append(append([]llm.ToolDef{}, tools...), taskToolDefs...)
+	}
+	if c.runSpawner != nil {
+		tools = append(tools, runToolDef)
 	}
 	return &agent.Session{
 		SessionID:  sessionID,
@@ -232,6 +240,8 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 		return fmt.Sprintf("started %s/%s (%s)%s.", ref.Source, ref.ID, ref.Title, where), nil
 	case "answer_questionnaire":
 		return c.answerQuestionnaire(ctx, str("source"), str("id"), str("questionnaire_id"), args["answers"]), nil
+	case "run_command":
+		return c.runCommand(ctx, args), nil
 	default:
 		return fmt.Sprintf("unknown tool %q.", tc.Function.Name), nil
 	}
