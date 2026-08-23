@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/iodesystems/yscr/plugins/pane"
 	"github.com/iodesystems/yscr/plugins/pane/claude"
 	"github.com/iodesystems/yscr/plugins/pane/terminal"
+	"github.com/iodesystems/yscr/questions"
 	"github.com/iodesystems/yscr/scratchpad"
 	"github.com/iodesystems/yscr/source"
 	"github.com/iodesystems/yscr/store"
@@ -107,10 +109,11 @@ func New(cfg *config.Config) (*Server, error) {
 		s.broadcastFleet()
 		s.Notify(title, body)
 	})
-	// Attach the scratchpad tools to the concierge (no-op when no durable store).
+	// Attach the scratchpad + open-questions tools (no-op when no durable store).
 	if pg != nil {
 		s.pad = pg
 		s.conc.WithTasks(pg)
+		s.conc.WithQuestions(&pgQuestions{pg})
 	}
 	// Run & watch: the terminal pane source spawns shell windows; foreground
 	// waits poll State until the shell is idle-at-prompt again.
@@ -144,6 +147,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/fleet", s.handleFleet)
 	mux.HandleFunc("GET /api/tasks", s.handleTasks)
 	mux.HandleFunc("POST /api/tasks/{id}/done", s.handleTaskDone)
+	mux.HandleFunc("GET /api/questions", s.handleQuestions)
+	mux.HandleFunc("POST /api/questions/{id}/answer", s.handleQuestionAnswer)
 	mux.HandleFunc("POST /api/answer", s.handleAnswer)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -318,4 +323,57 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// pgQuestions adapts *store.PG's question methods to questions.QuestionsStore
+// (the interface can't be satisfied directly: PG also has scratchpad's Add).
+type pgQuestions struct{ pg *store.PG }
+
+func (a *pgQuestions) Add(ctx context.Context, q questions.Question) (*questions.Question, error) {
+	return a.pg.AddQuestion(ctx, q)
+}
+func (a *pgQuestions) List(ctx context.Context) ([]questions.Question, error) {
+	return a.pg.ListQuestions(ctx)
+}
+func (a *pgQuestions) Answer(ctx context.Context, id, answer string) (bool, error) {
+	return a.pg.AnswerQuestion(ctx, id, answer)
+}
+
+// handleQuestions lists the open-questions queue (open first, oldest — they've
+// waited longest). The PWA renders it next to "Needs you".
+func (s *Server) handleQuestions(w http.ResponseWriter, r *http.Request) {
+	if s.pad == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"questions": []any{}})
+		return
+	}
+	qs, err := s.pad.(*store.PG).ListQuestions(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"questions": qs})
+}
+
+// handleQuestionAnswer records a tap-to-answer (no LLM): POST with {"answer"}.
+func (s *Server) handleQuestionAnswer(w http.ResponseWriter, r *http.Request) {
+	if s.pad == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "no durable store"})
+		return
+	}
+	var in struct{ Answer string `json:"answer"` }
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || strings.TrimSpace(in.Answer) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "answer is required"})
+		return
+	}
+	ok, err := s.pad.(*store.PG).AnswerQuestion(r.Context(), r.PathValue("id"), strings.TrimSpace(in.Answer))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "no open question with that id"})
+		return
+	}
+	s.broadcastFleet() // the PWA reloads questions with the fleet
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

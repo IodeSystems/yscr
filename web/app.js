@@ -73,6 +73,7 @@ async function loadFleet() {
     const r = await api("/api/fleet");
     const { sessions } = await r.json();
     renderQuestions(sessions);
+    loadOpenQuestions();
     loadTasks();
     box.innerHTML = "";
     if (!sessions || !sessions.length) {
@@ -1020,4 +1021,64 @@ loadFleet();
 loadAudioConfig();
 if (!connectStream()) {
   setInterval(loadFleet, 15000); // fallback poll where SSE is unavailable
+}
+
+// ── open questions (concierge's parked ambiguities) ────────────────
+// The work-around-ambiguity queue: questions the concierge parked while it kept
+// working. Answer by tap (POST /api/questions/{id}/answer — no LLM) or in chat.
+async function loadOpenQuestions() {
+  const box = $("#openq");
+  let qs = [];
+  try {
+    const r = await api("/api/questions");
+    if (r.ok) qs = (await r.json()).questions || [];
+  } catch (e) { return; }
+  const open = qs.filter((q) => q.Status === "open");
+  if (!open.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="secthead">I need from you</div>`;
+  for (const q of open) box.append(openQuestionCard(q));
+}
+
+function openQuestionCard(q) {
+  const card = document.createElement("div");
+  card.className = "qcard";
+  const head = document.createElement("div");
+  head.className = "qhead";
+  head.textContent = "concierge" + (q.TaskID ? ` · task ${q.TaskID}` : "");
+  card.append(head);
+  const qtext = document.createElement("div");
+  qtext.className = "qtext";
+  qtext.textContent = q.Question;
+  card.append(qtext);
+  if (q.Context) {
+    const note = document.createElement("div");
+    note.className = "qnote";
+    note.textContent = q.Context;
+    card.append(note);
+  }
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "answer…";
+  input.className = "qanswer";
+  const send = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    input.disabled = true;
+    api("/api/questions/" + q.ID + "/answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer: v }),
+    }).then(() => loadOpenQuestions()).catch((e) => showStatus("error: " + e.message));
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  const btn = document.createElement("button");
+  btn.className = "chip";
+  btn.textContent = "send";
+  btn.addEventListener("click", send);
+  const row = document.createElement("div");
+  row.className = "qopts";
+  row.append(input, btn);
+  card.append(row);
+  return card;
 }

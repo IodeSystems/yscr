@@ -11,6 +11,7 @@ import (
 
 	"github.com/iodesystems/agentkit/agent"
 	"github.com/iodesystems/yscr/cue"
+	"github.com/iodesystems/yscr/questions"
 	"github.com/iodesystems/yscr/scratchpad"
 )
 
@@ -59,15 +60,32 @@ CREATE TABLE IF NOT EXISTS cue_tasks (
 	seen_busy      bool   NOT NULL DEFAULT false,      -- reconciler latch: went busy after dispatch
 	created_at     bigint NOT NULL,
 	released_at    bigint NOT NULL DEFAULT 0,
-	done_at        bigint NOT NULL DEFAULT 0
+	done_at        bigint NOT NULL DEFAULT 0,
+	deps           text   NOT NULL DEFAULT '' -- comma-joined task ids that must be done first
 );
 -- Migrate existing deployments (phase 3.5 columns).
 ALTER TABLE cue_tasks ADD COLUMN IF NOT EXISTS run_session text NOT NULL DEFAULT '';
 ALTER TABLE cue_tasks ADD COLUMN IF NOT EXISTS seen_busy   bool NOT NULL DEFAULT false;
+ALTER TABLE cue_tasks ADD COLUMN IF NOT EXISTS deps        text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS cue_pending ON cue_tasks (priority DESC, created_at) WHERE status='pending';
 -- One live task per dedupe identity: dedupe_key='' opts out (partial-index NULLs).
 CREATE UNIQUE INDEX IF NOT EXISTS cue_dedupe_live ON cue_tasks (dedupe_key)
 	WHERE status IN ('pending','inflight') AND dedupe_key <> '';`
+
+const questionsSchema = `
+CREATE TABLE IF NOT EXISTS open_questions (
+	id          text   PRIMARY KEY,
+	question    text   NOT NULL,
+	context     text   NOT NULL DEFAULT '',
+	task_id     text   NOT NULL DEFAULT '',
+	status      text   NOT NULL DEFAULT 'open', -- open | answered
+	answer      text   NOT NULL DEFAULT '',
+	created_at  bigint NOT NULL,
+	answered_at bigint NOT NULL DEFAULT 0
+);
+-- One open question per normalized text (partial index; answered rows free up).
+CREATE UNIQUE INDEX IF NOT EXISTS questions_open ON open_questions (question)
+	WHERE status='open';`
 
 // NewPG connects, applies the schema, and returns the store.
 func NewPG(ctx context.Context, dsn string) (*PG, error) {
@@ -75,7 +93,7 @@ func NewPG(ctx context.Context, dsn string) (*PG, error) {
 	if err != nil {
 		return nil, fmt.Errorf("yscr/store: connect: %w", err)
 	}
-	for _, stmt := range []string{pgSchema, scratchpadSchema} {
+	for _, stmt := range []string{pgSchema, scratchpadSchema, questionsSchema} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			pool.Close()
 			return nil, fmt.Errorf("yscr/store: migrate: %w", err)
@@ -192,13 +210,13 @@ func (p *PG) LoadSubscriptions(ctx context.Context) ([]PushSub, error) {
 func (p *PG) EnqueueTask(ctx context.Context, t cue.Task, created int64) (bool, error) {
 	tag, err := p.pool.Exec(ctx,
 		`INSERT INTO cue_tasks
-		   (id, dedupe_key, prompt, priority, target_source, target_session, target_spawn, target_dir, status, created_at)
-		 SELECT $1,$2,$3,$4,$5,$6,$7,$8,'pending',$9
+		   (id, dedupe_key, prompt, priority, target_source, target_session, target_spawn, target_dir, status, created_at, deps)
+		 SELECT $1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10
 		 WHERE $2 = '' OR NOT EXISTS (
 		   SELECT 1 FROM cue_tasks WHERE dedupe_key=$2 AND status IN ('pending','inflight'))
 		 ON CONFLICT (id) DO NOTHING`,
 		t.ID, t.DedupeKey, t.Prompt, t.Priority,
-		t.Target.Source, t.Target.SessionID, t.Target.Spawn, t.Target.SpawnDir, created)
+		t.Target.Source, t.Target.SessionID, t.Target.Spawn, t.Target.SpawnDir, created, strings.Join(t.Deps, ","))
 	if err != nil {
 		return false, err
 	}
@@ -219,7 +237,7 @@ func (p *PG) InflightTasks(ctx context.Context) ([]cue.Task, error) {
 
 func (p *PG) queryTasks(ctx context.Context, where string) ([]cue.Task, error) {
 	rows, err := p.pool.Query(ctx,
-		`SELECT id, dedupe_key, prompt, priority, target_source, target_session, target_spawn, target_dir, created_at
+		`SELECT id, dedupe_key, prompt, priority, target_source, target_session, target_spawn, target_dir, created_at, deps
 		 FROM cue_tasks `+where)
 	if err != nil {
 		return nil, err
@@ -228,13 +246,42 @@ func (p *PG) queryTasks(ctx context.Context, where string) ([]cue.Task, error) {
 	var out []cue.Task
 	for rows.Next() {
 		var t cue.Task
+		var deps string
 		if err := rows.Scan(&t.ID, &t.DedupeKey, &t.Prompt, &t.Priority,
-			&t.Target.Source, &t.Target.SessionID, &t.Target.Spawn, &t.Target.SpawnDir, &t.CreatedAt); err != nil {
+			&t.Target.Source, &t.Target.SessionID, &t.Target.Spawn, &t.Target.SpawnDir, &t.CreatedAt, &deps); err != nil {
 			return nil, err
+		}
+		if deps != "" {
+			t.Deps = strings.Split(deps, ",")
 		}
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// TaskStatuses classifies cue tasks by id for the dependency gate: the first
+// map is DONE ids, the second LIVE (pending|inflight) ids. PlanWithStatus holds
+// a pending task until every dep is done; a live dep means "waiting on it".
+func (p *PG) TaskStatuses(ctx context.Context) (done, live map[string]bool, err error) {
+	done = map[string]bool{}
+	live = map[string]bool{}
+	rows, qerr := p.pool.Query(ctx, `SELECT id, status FROM cue_tasks WHERE status IN ('pending','inflight','done')`)
+	if qerr != nil {
+		return nil, nil, qerr
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, status string
+		if err := rows.Scan(&id, &status); err != nil {
+			return nil, nil, err
+		}
+		if status == "done" {
+			done[id] = true
+		} else {
+			live[id] = true
+		}
+	}
+	return done, live, rows.Err()
 }
 
 // MarkInflight transitions a pending task to inflight (on dispatch), recording
@@ -450,4 +497,68 @@ func (p *PG) Get(ctx context.Context, id string) (*scratchpad.Task, error) {
 	t.Kind = scratchpad.TaskKind(kind)
 	t.Status = scratchpad.Status(status)
 	return &t, nil
+}
+
+// ── open questions (goal plans: work-around-ambiguity) ─────────────
+
+// Add inserts an open question. No-op (nil, nil) when the text is empty or an
+// open question with the same normalized text exists — parking twice is a no-op.
+func (p *PG) AddQuestion(ctx context.Context, q questions.Question) (*questions.Question, error) {
+	if questions.Normalize(q) == "" {
+		return nil, nil
+	}
+	tag, err := p.pool.Exec(ctx,
+		`INSERT INTO open_questions (id, question, context, task_id, status, created_at)
+		 SELECT $1,$2,$3,$4,'open',$5
+		 WHERE NOT EXISTS (
+		   SELECT 1 FROM open_questions WHERE question=$6 AND status='open')
+		 ON CONFLICT (id) DO NOTHING`,
+		q.ID, q.Question, q.Context, q.TaskID, q.CreatedAt, questions.Normalize(q))
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, nil // dedupe no-op
+	}
+	out := q
+	out.Status = questions.StatusOpen
+	return &out, nil
+}
+
+// ListQuestions returns open questions first (oldest — they've waited longest),
+// then answered ones (newest).
+func (p *PG) ListQuestions(ctx context.Context) ([]questions.Question, error) {
+	rows, err := p.pool.Query(ctx,
+		`SELECT id, question, context, task_id, status, answer, created_at, answered_at
+		 FROM open_questions
+		 ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,
+		          CASE status WHEN 'open' THEN created_at ELSE -answered_at END`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []questions.Question
+	for rows.Next() {
+		var q questions.Question
+		var status string
+		if err := rows.Scan(&q.ID, &q.Question, &q.Context, &q.TaskID, &status, &q.Answer, &q.CreatedAt, &q.AnsweredAt); err != nil {
+			return nil, err
+		}
+		q.Status = questions.Status(status)
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+// AnswerQuestion records the user's answer (status-guarded on open). False for
+// unknown or already-answered ids.
+func (p *PG) AnswerQuestion(ctx context.Context, id, answer string) (bool, error) {
+	tag, err := p.pool.Exec(ctx,
+		`UPDATE open_questions SET status='answered', answer=$1, answered_at=$2
+		 WHERE id=$3 AND status='open'`,
+		answer, time.Now().UnixNano(), id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }

@@ -4,6 +4,7 @@
 - **Pluggable pane source** — generic tmux shell + program Adapters; claude (JSONL, pid→tty→pane adoption, question detect/answer) + terminal (scrollback, pipe-pane stream).
 - **Watch (SSE live-tail)** `POST/DELETE /api/watch/{source}/{id}` + PWA tail panel.
 - **Narrate** — LLM delta summary → TTS, per-session toggle (`service/narrate.go`).
+- **Goal plans (core)** — dependency axis on the cue release gate (`PlanWithStatus` + `ValidateDeps`, durable `cue_tasks.deps`), generator proposes edges with deterministic cycle/unknown-dep relaxation, open-questions queue (`questions/` pkg + Postgres + ask/list/answer tools + PWA "I need from you" tap-to-answer).
 - **Task cueing system** — generator → durable cue → deterministic release gate → autonomous dispatch (rails: kill-switch/dry-run/caps/hourly) → completion reconcile. Ships OFF.
 - **source.Source contract (Slice 0)** + Questionnaire crux; three backends validate it (autowork, openai, pane:claude).
 - **P1 autowork3 source API** — fleet / fleet/decisions / fleet/stream public (autowork3 `87b8bd3`, `bcc5dd9`, `bee6840`).

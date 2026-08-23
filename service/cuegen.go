@@ -115,11 +115,69 @@ func (g *cueGenerator) generateOnce(ctx context.Context) (int, error) {
 	}
 	now := time.Now().UnixNano()
 	enqueued := 0
+	batch := make([]cue.Task, 0, len(proposals))
 	for _, p := range proposals {
 		t, ok := p.toTask()
 		if !ok {
 			continue // skip malformed (no prompt / no source)
 		}
+		batch = append(batch, t)
+	}
+	// Dependency edges must name tasks in this batch and be acyclic — the LLM
+	// proposes, this validates. A bad edge drops that task's deps (it still
+	// enqueues; its work is not lost).
+	if len(batch) > 1 {
+		byID := make(map[string]bool, len(batch))
+		for _, t := range batch {
+			byID[t.ID] = true
+		}
+		// clean is the no-deps fallback (unknown deps already dropped).
+		clean := make([]cue.Task, 0, len(batch))
+		valid := make([]cue.Task, 0, len(batch))
+		for _, t := range batch {
+			ok := true
+			for _, d := range t.Deps {
+				if !byID[d] {
+					ok = false
+					break
+				}
+			}
+			tt := t
+			if !ok {
+				tt.Deps = nil
+				log.Printf("cue: generator dropped unknown deps on %q", tt.Prompt[:min(40, len(tt.Prompt))])
+			}
+			clean = append(clean, tt)
+			valid = append(valid, t)
+		}
+		if err := cue.ValidateDeps(valid); err != nil {
+			// Cycle: drop the deps one at a time until the graph is acyclic —
+			// the work is not lost, only the edges that cycle are.
+			log.Printf("cue: generator deps rejected (%v) — relaxing", err)
+			for _, t := range clean {
+				if len(t.Deps) == 0 {
+					continue
+				}
+				tt := t
+				tt.Deps = nil
+				candidate := make([]cue.Task, 0, len(clean))
+				for _, o := range clean {
+					if o.ID == tt.ID {
+						candidate = append(candidate, tt)
+					} else {
+						candidate = append(candidate, o)
+					}
+				}
+				if cue.ValidateDeps(candidate) == nil {
+					clean = candidate
+				}
+			}
+			batch = clean
+		} else {
+			batch = valid
+		}
+	}
+	for _, t := range batch {
 		added, err := g.enq.EnqueueTask(ctx, t, now)
 		if err != nil {
 			log.Printf("cue: enqueue %s: %v", t.ID, err)
@@ -137,10 +195,11 @@ Rules:
 - Only propose work that is not already being done by a session.
 - Prefer routing a task to an existing session (set "source" and "session_id") when it is the natural place; otherwise spawn a new one (set "spawn": true, and "dir" if relevant).
 - Give each task a stable "dedupe_key" identifying the work, so the same task is not proposed twice.
+- If one task must finish before another starts in this batch, set the later task's "deps" to the earlier task's "id" (assign each task a short "id" via its dedupe_key). Only use deps within THIS batch; never create cycles.
 - "source" MUST be a bare plugin id exactly as shown in the fleet's "source=" field (e.g. "claude-code"), never "source/id". "session_id" is the fleet's "id=" value.
 - If nothing new is warranted right now, return an empty list.
 Output STRICT JSON only, no prose:
-{"tasks":[{"prompt":"...","source":"...","session_id":"...","spawn":false,"dir":"","priority":0,"dedupe_key":"..."}]}`
+{"tasks":[{"id":"...","prompt":"...","source":"...","session_id":"...","spawn":false,"dir":"","priority":0,"deps":[],"dedupe_key":"..."}]}`
 
 func (g *cueGenerator) prompt(states []source.State) string {
 	var b strings.Builder
@@ -166,13 +225,15 @@ func (g *cueGenerator) prompt(states []source.State) string {
 // ── proposal parsing ────────────────────────────────────────────────
 
 type genProposal struct {
-	Prompt    string `json:"prompt"`
-	Source    string `json:"source"`
-	SessionID string `json:"session_id"`
-	Spawn     bool   `json:"spawn"`
-	Dir       string `json:"dir"`
-	Priority  int    `json:"priority"`
-	DedupeKey string `json:"dedupe_key"`
+	ID        string   `json:"id"`
+	Prompt    string   `json:"prompt"`
+	Source    string   `json:"source"`
+	SessionID string   `json:"session_id"`
+	Spawn     bool     `json:"spawn"`
+	Dir       string   `json:"dir"`
+	Priority  int      `json:"priority"`
+	Deps      []string `json:"deps"`
+	DedupeKey string   `json:"dedupe_key"`
 }
 
 // toTask converts a proposal to a cue.Task, or ok=false if it lacks the minimum
@@ -189,11 +250,16 @@ func (p genProposal) toTask() (cue.Task, bool) {
 	if dedupe == "" {
 		dedupe = tgt.Key() + "|" + prompt
 	}
+	id := strings.TrimSpace(p.ID)
+	if id == "" {
+		id = uuid.NewString()
+	}
 	return cue.Task{
-		ID:        uuid.NewString(),
+		ID:        id,
 		DedupeKey: dedupe,
 		Prompt:    prompt,
 		Priority:  p.Priority,
+		Deps:      p.Deps,
 		Target:    tgt,
 	}, true
 }

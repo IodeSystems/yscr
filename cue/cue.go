@@ -14,6 +14,7 @@
 package cue
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/iodesystems/yscr/source"
@@ -26,6 +27,7 @@ type Task struct {
 	Prompt    string // what to hand the target session
 	Priority  int    // higher is scheduled first
 	CreatedAt int64  // ns; tie-break (older first) so ordering is stable
+	Deps      []string // ids of tasks that must be DONE before this one releases
 	Target    Target
 }
 
@@ -88,6 +90,27 @@ type Decision struct {
 	Reason  string // why it was held; "" when released
 }
 
+func Plan(tasks []Task, fleet []source.State, inflight map[string]int, caps Caps, releasable map[source.Status]bool) []Decision {
+	return plan(tasks, fleet, inflight, caps, releasable, nil)
+}
+
+// PlanWithStatus is Plan plus the dependency axis: done/live classifies each
+// task (by id) — a pending task releases only when every dep in Deps is done.
+// A dep that is missing or still live holds the task ("waiting on <id>"). Pass
+// nil for status to behave exactly like Plan (no deps consulted).
+func PlanWithStatus(tasks []Task, fleet []source.State, inflight map[string]int, caps Caps, releasable map[source.Status]bool, done map[string]bool, live map[string]bool) []Decision {
+	m := make(map[string]taskStatus, len(tasks))
+	for id := range done {
+		m[id] = stDone
+	}
+	for id := range live {
+		if _, ok := m[id]; !ok {
+			m[id] = stLive
+		}
+	}
+	return plan(tasks, fleet, inflight, caps, releasable, m)
+}
+
 // Plan decides, for each cued task, release vs hold under the status + capacity
 // gate. Pure: inputs are snapshots and nothing is mutated.
 //
@@ -100,7 +123,65 @@ type Decision struct {
 //
 // Tasks are evaluated highest-priority-first (older first on a tie), and the
 // decisions are returned in that evaluation order.
-func Plan(tasks []Task, fleet []source.State, inflight map[string]int, caps Caps, releasable map[source.Status]bool) []Decision {
+// taskStatus classifies a task for the dependency gate: done (a dep is
+// satisfied), live (pending or in-flight — not yet done), or missing (no row).
+type taskStatus int
+
+const (
+	stMissing taskStatus = iota
+	stDone
+	stLive
+)
+
+func statusOf(m map[string]taskStatus, id string) taskStatus {
+	if st, ok := m[id]; ok {
+		return st
+	}
+	return stMissing
+}
+
+// ValidateDeps checks a plan's dependency edges before it is enqueued: every dep
+// must name another task in the plan (or an already-known done/live id), and the
+// graph must be acyclic. Returns nil when clean, an error naming the first
+// problem otherwise. Pure — no store access.
+func ValidateDeps(tasks []Task) error {
+	byID := make(map[string]Task, len(tasks))
+	for _, t := range tasks {
+		if _, dup := byID[t.ID]; dup {
+			return fmt.Errorf("duplicate task id %q", t.ID)
+		}
+		byID[t.ID] = t
+	}
+	state := map[string]int{} // 0 unvisited, 1 visiting, 2 done
+	var visit func(id string) error
+	visit = func(id string) error {
+		switch state[id] {
+		case 1:
+			return fmt.Errorf("dependency cycle through %q", id)
+		case 2:
+			return nil
+		}
+		state[id] = 1
+		for _, d := range byID[id].Deps {
+			if _, ok := byID[d]; !ok {
+				return fmt.Errorf("task %q depends on unknown task %q", id, d)
+			}
+			if err := visit(d); err != nil {
+				return err
+			}
+		}
+		state[id] = 2
+		return nil
+	}
+	for _, t := range tasks {
+		if err := visit(t.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func plan(tasks []Task, fleet []source.State, inflight map[string]int, caps Caps, releasable map[source.Status]bool, status map[string]taskStatus) []Decision {
 	if releasable == nil {
 		releasable = DefaultReleasable
 	}
@@ -141,6 +222,27 @@ func Plan(tasks []Task, fleet []source.State, inflight map[string]int, caps Caps
 
 	for _, t := range ordered {
 		k := t.Target.Key()
+
+		if status != nil {
+			blocked := ""
+			for _, d := range t.Deps {
+				switch statusOf(status, d) {
+				case stDone:
+					// satisfied
+				case stLive:
+					blocked = "waiting on " + d
+				default:
+					blocked = "dep " + d + " not found"
+				}
+				if blocked != "" {
+					break
+				}
+			}
+			if blocked != "" {
+				hold(t, blocked)
+				continue
+			}
+		}
 
 		if caps.Global > 0 && global >= caps.Global {
 			hold(t, "global cap reached")

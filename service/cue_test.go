@@ -40,6 +40,9 @@ type fakeCueStore struct {
 	lastRunID string   // run_session passed to the last MarkInflight
 }
 
+func (f *fakeCueStore) TaskStatuses(context.Context) (map[string]bool, map[string]bool, error) {
+	return nil, nil, nil
+}
 func (f *fakeCueStore) PendingTasks(context.Context) ([]cue.Task, error)  { return f.pending, nil }
 func (f *fakeCueStore) InflightTasks(context.Context) ([]cue.Task, error) { return f.inflight, nil }
 func (f *fakeCueStore) InflightRows(context.Context) ([]store.InflightRow, error) {

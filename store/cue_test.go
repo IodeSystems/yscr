@@ -136,3 +136,74 @@ func TestCueStore_FeedsPlan(t *testing.T) {
 		t.Fatalf("expected 2 decisions from 2 pending, got %d", len(decisions))
 	}
 }
+
+// TestCueStore_DepsRoundTrip proves the dependency axis survives the store:
+// enqueue with deps → PendingTasks returns them → PlanWithStatus holds until done.
+func TestCueStore_DepsRoundTrip(t *testing.T) {
+	pg, ctx := testPG(t)
+
+	a := cue.Task{ID: "cuetest-da", DedupeKey: "da", Prompt: "build", Target: cue.Target{Source: "cc", SessionID: "s1"}}
+	b := cue.Task{ID: "cuetest-db", DedupeKey: "db", Prompt: "test", Deps: []string{"cuetest-da"}, Target: cue.Target{Source: "cc", SessionID: "s2"}}
+	if ok, err := pg.EnqueueTask(ctx, a, 1); err != nil || !ok {
+		t.Fatalf("enqueue a: %v %v", ok, err)
+	}
+	if ok, err := pg.EnqueueTask(ctx, b, 2); err != nil || !ok {
+		t.Fatalf("enqueue b: %v %v", ok, err)
+	}
+
+	pending, err := pg.PendingTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotB *cue.Task
+	for i := range pending {
+		if pending[i].ID == "cuetest-db" {
+			gotB = &pending[i]
+		}
+	}
+	if gotB == nil || len(gotB.Deps) != 1 || gotB.Deps[0] != "cuetest-da" {
+		t.Fatalf("deps not round-tripped: %+v", gotB)
+	}
+
+	done, live, err := pg.TaskStatuses(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !live["cuetest-da"] || !live["cuetest-db"] {
+		t.Fatalf("both should be live: done=%v live=%v", done, live)
+	}
+
+	fleet := []source.State{
+		{Ref: source.SessionRef{Source: "cc", ID: "s1"}, Status: source.StatusIdle},
+		{Ref: source.SessionRef{Source: "cc", ID: "s2"}, Status: source.StatusIdle},
+	}
+	ds := cue.PlanWithStatus(pending, fleet, nil, cue.Caps{}, nil, done, live)
+	released := map[string]bool{}
+	for _, d := range ds {
+		if d.Release {
+			released[d.Task.ID] = true
+		}
+	}
+	if !released["cuetest-da"] || released["cuetest-db"] {
+		t.Fatalf("want only a released while b waits: %v", released)
+	}
+
+	// Mark a done → b releases.
+	if ok, _ := pg.MarkInflight(ctx, "cuetest-da", "s1", 3); !ok {
+		t.Fatal("mark inflight")
+	}
+	if ok, _ := pg.MarkDone(ctx, "cuetest-da", 4); !ok {
+		t.Fatal("mark done")
+	}
+	done, live, _ = pg.TaskStatuses(ctx)
+	ds = cue.PlanWithStatus(pending, fleet, nil, cue.Caps{}, nil, done, live)
+	released = map[string]bool{}
+	for _, d := range ds {
+		if d.Release {
+			released[d.Task.ID] = true
+		}
+	}
+	if !released["cuetest-db"] {
+		t.Fatalf("b should release after dep done: %v", released)
+	}
+}

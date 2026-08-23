@@ -214,3 +214,5 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .taskmeta { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .taskdone { margin-top: 4px; font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
 .taskdone:active { opacity: .6; }
+
+.qanswer { flex: 1; min-width: 0; }

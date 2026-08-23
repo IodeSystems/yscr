@@ -32,6 +32,7 @@ import (
 type cueStore interface {
 	PendingTasks(ctx context.Context) ([]cue.Task, error)
 	InflightTasks(ctx context.Context) ([]cue.Task, error)
+	TaskStatuses(ctx context.Context) (done, live map[string]bool, err error)
 	MarkInflight(ctx context.Context, id, runSession string, releasedAt int64) (bool, error)
 	InflightRows(ctx context.Context) ([]store.InflightRow, error)
 	MarkSeenBusy(ctx context.Context, id string) error
@@ -159,8 +160,13 @@ func (r *cueRunner) release(ctx context.Context, states []source.State) {
 		return
 	}
 
+	done, live, err := r.store.TaskStatuses(ctx)
+	if err != nil {
+		log.Printf("cue: task statuses: %v", err)
+		return
+	}
 	r.pruneWindow()
-	for _, d := range cue.Plan(pending, states, cue.Counts(inflight), r.caps, nil) {
+	for _, d := range cue.PlanWithStatus(pending, states, cue.Counts(inflight), r.caps, nil, done, live) {
 		if !d.Release {
 			continue
 		}

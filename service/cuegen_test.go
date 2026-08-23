@@ -113,3 +113,58 @@ func TestNewCueGenerator_NilWithoutGoals(t *testing.T) {
 		t.Error("goals + runner + enq → generator")
 	}
 }
+
+func TestGenerate_DepsCarriedAndValidated(t *testing.T) {
+	out := `{"tasks":[
+	  {"id":"a","prompt":"build","source":"cc","session_id":"s1","dedupe_key":"k1"},
+	  {"id":"b","prompt":"test","source":"cc","session_id":"s1","deps":["a"],"dedupe_key":"k2"}
+	]}`
+	fe := &fakeEnq{}
+	n, err := gen(out, fe).generateOnce(context.Background())
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	var b *cue.Task
+	for i := range fe.tasks {
+		if fe.tasks[i].ID == "b" {
+			b = &fe.tasks[i]
+		}
+	}
+	if b == nil || len(b.Deps) != 1 || b.Deps[0] != "a" {
+		t.Fatalf("deps not carried: %+v", b)
+	}
+}
+
+func TestGenerate_UnknownDepsDropped(t *testing.T) {
+	out := `{"tasks":[
+	  {"id":"a","prompt":"build","source":"cc","session_id":"s1","dedupe_key":"k1"},
+	  {"id":"b","prompt":"test","source":"cc","session_id":"s1","deps":["ghost"],"dedupe_key":"k2"}
+	]}`
+	fe := &fakeEnq{}
+	n, err := gen(out, fe).generateOnce(context.Background())
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	for _, tt := range fe.tasks {
+		if tt.ID == "b" && len(tt.Deps) != 0 {
+			t.Fatalf("unknown dep should be dropped: %+v", tt.Deps)
+		}
+	}
+}
+
+func TestGenerate_CycleFallsBackNoDeps(t *testing.T) {
+	out := `{"tasks":[
+	  {"id":"a","prompt":"one","source":"cc","session_id":"s1","deps":["b"],"dedupe_key":"k1"},
+	  {"id":"b","prompt":"two","source":"cc","session_id":"s1","deps":["a"],"dedupe_key":"k2"}
+	]}`
+	fe := &fakeEnq{}
+	n, err := gen(out, fe).generateOnce(context.Background())
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	for _, tt := range fe.tasks {
+		if len(tt.Deps) != 0 {
+			t.Fatalf("cycle should fall back to no deps: %+v", tt.Deps)
+		}
+	}
+}

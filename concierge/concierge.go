@@ -18,6 +18,7 @@ import (
 	"github.com/iodesystems/agentkit/agent"
 	"github.com/iodesystems/agentkit/llm"
 
+	"github.com/iodesystems/yscr/questions"
 	"github.com/iodesystems/yscr/source"
 	"github.com/iodesystems/yscr/scratchpad"
 )
@@ -39,6 +40,10 @@ type Concierge struct {
 	// Scratchpad work-list (nil when no durable store — task tools stay off).
 	tasks       scratchpad.Store
 	taskToolsOn bool
+
+	// Open-questions queue (work-around-ambiguity; nil without a durable store).
+	questions       questions.QuestionsStore
+	questionToolsOn bool
 
 	// Run & watch (run_command): the shell-spawning source + a wait-for-idle
 	// poller. Nil until WithRun is called (no terminal panes enabled).
@@ -106,6 +111,9 @@ func (c *Concierge) session(sessionID string) *agent.Session {
 	tools := conciergeTools
 	if c.taskToolsOn {
 		tools = append(append([]llm.ToolDef{}, tools...), taskToolDefs...)
+	}
+	if c.questionToolsOn {
+		tools = append(tools, questionToolDefs...)
 	}
 	if c.runSpawner != nil {
 		tools = append(tools, runToolDef)
@@ -186,6 +194,10 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 
 	if isTaskTool(tc.Function.Name) {
 		return c.taskDispatch(ctx, tc.Function.Name, args), nil
+	}
+
+	if isQuestionTool(tc.Function.Name) {
+		return c.questionDispatch(ctx, tc.Function.Name, args), nil
 	}
 
 	switch tc.Function.Name {

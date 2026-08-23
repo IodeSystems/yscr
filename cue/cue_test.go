@@ -1,6 +1,7 @@
 package cue
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/iodesystems/yscr/source"
@@ -134,5 +135,86 @@ func TestPlan_CustomReleasableWidensToRunning(t *testing.T) {
 	got := released(Plan(tasks, fleet, nil, Caps{}, relax))
 	if !got["run1"] {
 		t.Error("widened releasable set should allow pushing onto a running session")
+	}
+}
+
+// ── dependency axis (goal plans) ────────────────────────────────────
+
+func TestPlanWithStatus_DepsHoldUntilDone(t *testing.T) {
+	fleet := []source.State{st("cc", "a", source.StatusIdle), st("cc", "b", source.StatusIdle)}
+	tasks := []Task{
+		existing("a", "cc", 0, 1),
+		{ID: "b", Priority: 0, CreatedAt: 2, Deps: []string{"a"}, Target: Target{Source: "cc", SessionID: "b"}},
+	}
+	// a pending (live — not done), b depends on a → b holds.
+	ds := PlanWithStatus(tasks, fleet, nil, Caps{}, nil, map[string]bool{}, map[string]bool{"a": true})
+	got := released(ds)
+	if !got["a"] || got["b"] {
+		t.Fatalf("want only a released: %v", got)
+	}
+	var reason string
+	for _, d := range ds {
+		if d.Task.ID == "b" {
+			reason = d.Reason
+		}
+	}
+	if reason != "waiting on a" {
+		t.Fatalf("hold reason = %q", reason)
+	}
+
+	// a done → b releases.
+	ds = PlanWithStatus(tasks, fleet, nil, Caps{}, nil, map[string]bool{"a": true}, nil)
+	got = released(ds)
+	if !got["a"] || !got["b"] {
+		t.Fatalf("want both released after dep done: %v", got)
+	}
+}
+
+func TestPlanWithStatus_MissingDepHolds(t *testing.T) {
+	fleet := []source.State{st("cc", "s1", source.StatusIdle)}
+	tasks := []Task{{ID: "b", CreatedAt: 1, Deps: []string{"ghost"}, Target: Target{Source: "cc", SessionID: "s1"}}}
+	ds := PlanWithStatus(tasks, fleet, nil, Caps{}, nil, map[string]bool{}, map[string]bool{})
+	if released(ds)["b"] {
+		t.Fatal("missing dep should hold")
+	}
+	for _, d := range ds {
+		if d.Task.ID == "b" && d.Reason != "dep ghost not found" {
+			t.Fatalf("reason = %q", d.Reason)
+		}
+	}
+}
+
+func TestPlan_NilStatusIgnoresDeps(t *testing.T) {
+	fleet := []source.State{st("cc", "s1", source.StatusIdle)}
+	tasks := []Task{{ID: "b", CreatedAt: 1, Deps: []string{"a"}, Target: Target{Source: "cc", SessionID: "s1"}}}
+	// Plan (no status map) behaves as before: deps are not consulted.
+	if !released(Plan(tasks, fleet, nil, Caps{}, nil))["b"] {
+		t.Fatal("Plan without a status map should ignore Deps")
+	}
+}
+
+func TestValidateDeps(t *testing.T) {
+	ok := []Task{
+		{ID: "a"},
+		{ID: "b", Deps: []string{"a"}},
+		{ID: "c", Deps: []string{"a", "b"}},
+	}
+	if err := ValidateDeps(ok); err != nil {
+		t.Fatalf("valid graph rejected: %v", err)
+	}
+
+	cyc := []Task{{ID: "a", Deps: []string{"b"}}, {ID: "b", Deps: []string{"a"}}}
+	if err := ValidateDeps(cyc); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("cycle not caught: %v", err)
+	}
+
+	dangling := []Task{{ID: "a", Deps: []string{"ghost"}}}
+	if err := ValidateDeps(dangling); err == nil || !strings.Contains(err.Error(), "unknown task") {
+		t.Fatalf("dangling dep not caught: %v", err)
+	}
+
+	dup := []Task{{ID: "a"}, {ID: "a"}}
+	if err := ValidateDeps(dup); err == nil {
+		t.Fatal("duplicate id not caught")
 	}
 }
