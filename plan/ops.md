@@ -13,7 +13,7 @@
    VPN zone, bearer-token like autowork3's client-token.
 
 ## Status
-◐ in progress — #2 done (see below); #1 + #3 not started.
+◐ in progress — #1 + #2 done; #3 (optional auth) not started.
 
 ### ✅ Durable session registries
 - **openai plugin** (`plugins/openai`): `RestoreFromStore(ctx, st)` rebuilds the
@@ -28,11 +28,14 @@
   extra wiring. Verified live: kill + restart → fleet re-lists both claude
   sessions + the openai primary (conversation recall intact).
 
-### ◻ systemd unit
-- Write `/etc/systemd/system/yscr.service` (or `~/.config/systemd/user/yscr.
-  service` for user scope): ExecStart pointing at the built binary, WorkingDir,
-  Restart=on-failure, After=network.target. The dev auto-reload (`.air.toml` in
-  `yscr-air` tmux) stays for development; systemd is the running mode.
+### ✅ systemd unit (user scope)
+- `~/.config/systemd/user/yscr.service`: Type=simple, ExecStart at the built
+  binary (`tmp/yscr -config ~/.yscr/config.json -listen 127.0.0.1:8600`),
+  Restart=on-failure, WantedBy=default.target. Enabled + started; verified
+  live (health + fleet serve under systemd). User scope because the dev box
+  doesn't grant root for system units; `loginctl enable-linger nthalk` keeps
+  it running after logout if desired. The `.air.toml` tmux session stays for
+  development hot-reload.
 
 ### ◻ Optional auth
 - Bearer-token middleware (like autowork3's client-token) gated by a config
