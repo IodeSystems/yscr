@@ -42,7 +42,7 @@ medium never reaches the model.
   speaks only on a real advance with one utterance in flight, so an unchanged
   session never re-fires (the drone dies). The LLM phrases each advance as one
   spoken sentence → SSE `narration` events (same shape as per-session narrate) +
-  web-push `Notify`. Driven by the fleet watcher (`ambientSync` starts/stops
+  web-push `Notify`. Driven by the session watcher (`ambientSync` starts/stops
   narrations as sessions enter/leave). Ships OFF (`ambient.enabled`).
   Tests: L1 distill/noise, no-drone gate (20 identical ticks → 1 utterance),
   E2E loop (advance speaks, drone silent, second advance speaks). -race green.

@@ -17,7 +17,7 @@
 ### ✅ Durable session registries
 - **claude adapter**: `Discover` reads `~/.claude/sessions/*.json` on every List
   call, so adoption self-heals after a reboot with no extra wiring. Verified
-  live: kill + restart → fleet re-lists the claude sessions.
+  live: kill + restart → session list re-derives the claude sessions.
 - (The openai plugin that needed an explicit `RestoreFromStore` was later
   removed — the concierge is just an agentkit session on corrallm.)
 
@@ -25,7 +25,7 @@
 - `~/.config/systemd/user/yscr.service`: Type=simple, ExecStart at the built
   binary (`tmp/yscr -config ~/.yscr/config.json -listen 127.0.0.1:8600`),
   Restart=on-failure, WantedBy=default.target. Enabled + started; verified
-  live (health + fleet serve under systemd). User scope because the dev box
+  live (health + session API serve under systemd). User scope because the dev box
   doesn't grant root for system units; `loginctl enable-linger nthalk` keeps
   it running after logout if desired. The `.air.toml` tmux session stays for
   development hot-reload.

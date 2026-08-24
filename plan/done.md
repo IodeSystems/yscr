@@ -11,7 +11,7 @@
 - **source.Source contract (Slice 0)** + Questionnaire crux; validated by the tmux-hosted CLIs/panes (claude, terminal).
 - **autowork source removed** — yscr is purely a tmux-pane mediary now (claude-code, terminal); plugin, config, and all references deleted.
 - **openai source removed** — the concierge is just an agentkit session on corrallm; no separate conversation-source plugin. Plugin, smoke command, config, and references deleted.
-- **PWA** — installable; chat, horizontal fleet card scroller, detail sheet, "Needs you" tap-to-answer (`POST /api/answer`, no LLM), web push (VAPID auto-keypair).
+- **PWA** — installable; chat, horizontal session card scroller, detail sheet, "Needs you" tap-to-answer (`POST /api/answer`, no LLM), web push (VAPID auto-keypair).
 - **Voice** — audio proxy (STT/TTS) + PWA mic/TTS with barge-in suppression; streaming STT prototype (realtime WS relay + PCM worklet) verified backend-side.
 - **Postgres durable store** — conversation survives restart; push subs; cue_tasks.
 - **serialized + coalescing per-session dispatch** (`concierge/queue.go`), server-side queue-not-abort.
@@ -25,6 +25,6 @@
 - **Scratchpad — run & watch** (`79dbc86`) — terminal adapter Spawn (detached sh window) + run_command tool (foreground bounded wait-for-idle + output tail; background pane id).
 - **Run completion summaries** — long command outputs distilled to 1-3 sentences by the LLM (raw tail kept); short output / failure → raw tail.
 - **Run completion summaries** — long command outputs distilled to 1-3 sentences by the LLM (raw tail kept); short output / failure → raw tail.
-- **Diagrams & reports on request** — `reports/` SVG renderer (task dep graph / fleet map / work list), concierge `render_diagram` + `write_report` tools, reports persisted to ~/.yscr/reports/, PWA inline-SVG bubbles + Reports listing (`GET /api/reports`).
+- **Diagrams & reports on request** — `reports/` SVG renderer (task dep graph / session map / work list), concierge `render_diagram` + `write_report` tools, reports persisted to ~/.yscr/reports/, PWA inline-SVG bubbles + Reports listing (`GET /api/reports`).
 - **Decision memory** — decisions/ package (KeyFor exact-match, Resolve with provenance, Mem); Postgres decisions table (append-only + supersede); capture on BOTH answer paths (tap + concierge tool); persona rule; PWA "Decisions I remember" + GET /api/decisions.
 - **Medium-aware verbosity** — ConverseOn medium hint (text|speech) through the dispatch queue; PWA sends "speech" for voiced utterances or speak-mode replies.

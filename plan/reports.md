@@ -6,11 +6,11 @@
 ## Purpose
 On request ("draw the dependency graph", "give me a full report on session X"),
 the concierge produces:
-1. **Diagrams** — task/dependency graphs, session/fleet maps, flows. Rendered
+1. **Diagrams** — task/dependency graphs, session maps, flows. Rendered
    as SVG (PWA-native) from the structured state it already has (cue tasks +
    deps, `source.State` rollups). Mermaid-in-markdown is an acceptable interim.
 2. **Detailed reports** — long-form written reports: per-session deep dive
-   (transcript/scrollback via `read_history`), fleet status report, goal-
+   (transcript/scrollback via `read_history`), session status report, goal-
    progress report. Persisted to disk (`~/.yscr/reports/`) + linked in the PWA,
    so a report is an artifact, not just chat text.
 
@@ -22,7 +22,7 @@ the concierge produces:
 
 ## Design constraints
 - **LLM proposes, deterministic layer renders** — same line as cue/scratchpad.
-- One diagram renderer serves goal-plans (dep graphs) and fleet maps.
+- One diagram renderer serves goal-plans (dep graphs) and session maps.
 
 ## Status
 ✅ core done (2026-08-23):
@@ -35,7 +35,7 @@ the concierge produces:
   `~/.yscr/reports/<ts>-<slug>.md` and returns the path. LLM picks kind/scope +
   writes the report body; rendering is deterministic (no model in the draw path).
 - Service wiring (`service/report.go`): ReportState fns over the durable store
-  (cue tasks + statuses, scratchpad board) + live fleet states.
+  (cue tasks + statuses, scratchpad board) + live session states.
 - PWA: `renderReply` extracts `<diagram>` blocks from a concierge bubble and
   renders the SVG inline (styles.css .msg .diagram).
 

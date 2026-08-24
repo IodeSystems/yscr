@@ -6,24 +6,25 @@
 
 ## What this is
 
-`github.com/iodesystems/yscr` — **the conversational mediary for terminal
-sessions** ("yes sir"). One conversation covers everything running on the
-machine: read, scroll back through, and operate any TUI in tmux panes; keep a
+`github.com/iodesystems/yscr` — **the conversational mediary for your tmux
+panes** ("yes sir"). One conversation covers everything running in the
+terminal: read, scroll back through, and operate any TUI in a pane; keep a
 scratchpad of tasks/todos/schedules; run and watch commands; produce diagrams
 and detailed reports on request; and drive multi-step work toward completion —
 without ever leaving the conversation or looking at a screen.
 
-**The concierge** is an [agentkit](../agentkit) session:
-- swappable LLM endpoint — corrallm | OpenRouter | Claude Code CLI (tmux virt)
-- audio via **oidio** (STT/TTS) ↔ corrallm
-- drives all backends through the one `source.Source` plugin contract
+**The concierge** is an [agentkit](../agentkit) session on **corrallm**
+(the LLM endpoint; corrallm's downstream model adapters are its business), with
+audio via **oidio** (STT/TTS). It drives every pane through the one
+`source.Source` plugin contract, with a program **Adapter** per supported
+application — `source/source.go` + `plugins/pane/adapter.go`:
 
-**Sources (plugins)** — `source/source.go`:
-
-| plugin | Source | Spawner | Actor |
+| adapter | Source | Spawner | Actor |
 |---|---|---|---|
-| **pane: claude** | live pane + JSONL transcript tail | new tmux session | answer questions (verified keystroke protocol) |
-| **pane: terminal** | scrollback + pipe-pane stream | — | — |
+| **claude** | live pane + JSONL transcript tail | new tmux session | answer questions (verified keystroke protocol) |
+| **terminal** | scrollback + pipe-pane stream | shell window (run commands) | — |
+
+A new supported program = a new Adapter, no new tmux/source code.
 
 A program keeps its own permissioning; the concierge only reads and types.
 
@@ -43,21 +44,21 @@ Historical design docs (membrane origin, Android client) → `plan/archive/`.
 
 ## Active work
 
-### ✅ Task cueing system — outbound scheduler (concierge → sessions)
+### ✅ Task cueing system — outbound scheduler (concierge → panes)
 The mirror of the inbound coalescing dispatch: an outbound scheduler that
-manages the flow of work TO sessions given the fleet is "rarely truly idle"
+manages the flow of work TO panes given they are "rarely truly idle"
 (so wait-for-idle isn't a viable gate). **Decisions (user, locked):** task
-source = concierge-derived (LLM generator tick proposes from fleet `State` +
+source = concierge-derived (LLM generator tick proposes from pane `State` +
 standing goals) · release policy = deterministic status + capacity gate (no
 LLM in the hot path) · autonomy = autonomous (`Post`/`Spawn` on its own,
 notify after — no confirm step).
 
 **Shape:** cue store (Postgres; survives restart) · generator tick (LLM, slow
-cadence) · release loop hooked into the fleet watcher (polls every 12s) ·
+cadence) · release loop hooked into the session watcher (polls every 12s) ·
 router (existing session via `Post` vs new via `Spawner`).
 
 - ✅ **Data model + deterministic release gate** (`cue/cue.go`: `Task`,
-  `Target`, `Caps`, `Plan`). Pure fn: (tasks, fleet snapshot, in-flight counts,
+  `Target`, `Caps`, `Plan`). Pure fn: (tasks, session snapshot, in-flight counts,
   caps) → release/hold. Status gate (releasable defaults to idle/done/
   awaiting_user — capacity, not idleness, is what lets work flow to active
   sessions) + per-session/global/spawn caps + priority ordering. 6 tests.
@@ -71,12 +72,12 @@ router (existing session via `Post` vs new via `Spawner`).
   sliding window, caps. 6 tests.
 - ✅ **Completion detection** (`cueRunner.reconcile`, before release each tick):
   a task completes once its dispatched session has been SEEN BUSY then returns
-  to a free status or leaves the fleet; `completion_ttl_seconds` (default 1800)
+  to a free status or leaves the set of live sessions; `completion_ttl_seconds` (default 1800)
   backstop reclaims capacity. `seen_busy` latch + `run_session` columns
   (ALTER … IF NOT EXISTS migrates). awaiting_user = still in-flight. Live mode
   is sustainable (capacity actually frees).
 - ✅ **Generator tick** (`service/cuegen.go`): on `gen_interval_seconds` cadence,
-  shows the LLM fleet + `Cue.Goals`, parses strict-JSON `{tasks:[…]}` (tolerant
+  shows the LLM session states + `Cue.Goals`, parses strict-JSON `{tasks:[…]}` (tolerant
   extraction), `EnqueueTask`s each (uuid; DedupeKey supplied or derived).
   Enqueue-only → runs even in release dry-run.
 
@@ -179,19 +180,20 @@ hook payload; write = tmux send-keys.**
   success. Unit tested; verified end-to-end live on a real 3-question mixed
   prompt (Env/Region/Notify all submitted).
 - ✅ **PWA "Needs you" + tap-to-answer** — `#questions` renders every
-  `State.Pending` questionnaire below the fleet strip: source·title, question,
+  `State.Pending` questionnaire below the session strip: source·title, question,
   options as tappable chips (single = one tap; multiSelect = toggle + Submit) →
   `POST /api/answer` (`handleAnswer`) validates against the live questionnaire
-  and calls `source.Actor.Act` directly — **NO LLM** — then broadcasts fleet. A
+  and calls `source.Actor.Act` directly — **NO LLM** — then broadcasts sessions. A
   question is BOTH discussed (concierge `answer_questionnaire` tool, with the
   fix-loop: bad/missing answers return an instruction so the model re-asks) and
   shown (card).
 
 ### ✅ P2 — yscr service + PWA
 - ✅ **concierge on agentkit** (`concierge/`) — an `agent.Session` with a
-  source-aware toolset (fleet_status / pull_detail / read_history / post /
-  spawn / answer_questionnaire) dispatching into the contract; swappable LLM
-  endpoint; own conversation store. `Converse` = inject user msg → Turn → reply.
+  source-aware toolset (session_status / pull_detail / read_history / post /
+  spawn / answer_questionnaire) dispatching into the contract, on corrallm
+  via agentkit, with its own conversation store. `Converse` = inject user msg
+  → Turn → reply.
 - ✅ **serialized + coalescing per-session dispatch** (`concierge/queue.go`) —
   each session has one worker goroutine; a turn coalesces everything queued at
   its start into ONE merged turn ("append new work, re-evaluate"); mid-turn
@@ -199,13 +201,14 @@ hook payload; write = tmux send-keys.**
   `turnTimeout` (5m) so one caller's cancel can't abort a shared turn.
   **Decision (user): server-side, queue-not-abort.**
 - ✅ **service routes** (`service/`, `config/`) — `POST /api/converse`,
-  `GET /api/fleet` (aggregated `[]source.State`), `/api/health`, embedded
+  `GET /api/fleet` (aggregated `[]source.State`; the API name predates the
+  reframing — it lists every session across all adapters), `/api/health`, embedded
   installable PWA. **Web Push**: auto-generated VAPID keypair, subscribe,
   `Server.Notify` fan-out; `sw.js` background push → showNotification. Push
   needs a secure context (HTTPS or localhost).
-- ✅ **SSE + Notify-from-events** — `GET /api/stream` hub + fleet watcher
+- ✅ **SSE + Notify-from-events** — `GET /api/stream` hub + session watcher
   (12s poll, diffs `source.State`): a material transition (new decision awaiting
-  you / entered blocked / failed) fires an SSE `notice` (toast + fleet refresh)
+  you / entered blocked / failed) fires an SSE `notice` (toast + session refresh)
   AND a web-push `Notify`. Baseline primed on start so a restart doesn't
   re-announce in-flight work.
 - ✅ **voice (audio proxy + PWA mic/TTS)** — `service/audio.go`: forward-only
@@ -248,5 +251,5 @@ hook payload; write = tmux send-keys.**
 
 ## How to re-pick-up
 1. Read this + `source/source.go` (the contract) + the subplan you're working.
-2. Related: [[agentkit]] (the concierge engine), autowork3 `plan/` docs,
-   `plan/archive/` (membrane origin + Android client design).
+2. Related: [[agentkit]] (the concierge engine); `plan/archive/` for the
+   historical membrane/Android-client design docs.

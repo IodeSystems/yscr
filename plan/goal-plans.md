@@ -32,7 +32,7 @@ could do anyway.
 
 ### ✅ Dependency axis on the release gate (`cue/cue.go`)
 - `Task.Deps []string` — ids that must be DONE before the task releases.
-- `PlanWithStatus(tasks, fleet, inflight, caps, releasable, done, live)` — the
+- `PlanWithStatus(tasks, sessions, inflight, caps, releasable, done, live)` — the
   third axis: a pending task holds ("waiting on <id>" / "dep <id> not found")
   until every dep is done. `Plan` unchanged (nil status = no deps consulted).
 - `ValidateDeps(tasks)` — pure acyclic + known-id check for a plan batch.
