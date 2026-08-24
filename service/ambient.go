@@ -20,6 +20,7 @@
 package service
 
 import (
+	"strconv"
 	"context"
 	"fmt"
 	"strings"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/iodesystems/agentkit/llm"
 
+	"github.com/iodesystems/yscr/config"
 	"github.com/iodesystems/yscr/source"
 )
 
@@ -51,13 +53,57 @@ type ambientHub struct {
 	active   map[string]context.CancelFunc
 	cells    map[string]*ambientCell
 	interval time.Duration // distill cadence; overridable in tests
+	minSpeak time.Duration // L2: min gap between one session's utterances (default 60s)
+	quiet    func() bool   // quiet-hours gate (nil = never quiet); checked per tick
+	now      func() time.Time
 }
 
-func newAmbientHub() *ambientHub {
+func newAmbientHub(cfg config.AmbientConfig) *ambientHub {
+	minSpeak := 60 * time.Second
+	if cfg.MinIntervalSeconds > 0 {
+		minSpeak = time.Duration(cfg.MinIntervalSeconds) * time.Second
+	}
 	return &ambientHub{
 		active:   map[string]context.CancelFunc{},
 		cells:    map[string]*ambientCell{},
 		interval: defaultAmbientInterval,
+		minSpeak: minSpeak,
+		quiet:    quietHours(cfg.QuietStart, cfg.QuietEnd),
+		now:      time.Now,
+	}
+}
+
+// quietHours parses "HH:MM" bounds into a gate. Empty/invalid bounds → never
+// quiet. start > end wraps midnight (22:00–07:00 is quiet 10pm→7am).
+func quietHours(start, end string) func() bool {
+	parse := func(s string) (int, int, bool) {
+		parts := strings.Split(s, ":")
+		if len(parts) != 2 {
+			return 0, 0, false
+		}
+		h, err1 := strconv.Atoi(parts[0])
+		m, err2 := strconv.Atoi(parts[1])
+		if err1 != nil || err2 != nil || h < 0 || h > 23 || m < 0 || m > 59 {
+			return 0, 0, false
+		}
+		return h, m, true
+	}
+	sh, sm, ok1 := parse(start)
+	eH, em, ok2 := parse(end)
+	if !ok1 || !ok2 {
+		return func() bool { return false }
+	}
+	sMin, eMin := sh*60+sm, eH*60+em
+	if sMin == eMin {
+		return func() bool { return false }
+	}
+	return func() bool {
+		t := time.Now()
+		now := t.Hour()*60 + t.Minute()
+		if sMin < eMin {
+			return now >= sMin && now < eMin
+		}
+		return now >= sMin || now < eMin // wraps midnight
 	}
 }
 
@@ -67,8 +113,14 @@ func (h *ambientHub) start(key string, cancel context.CancelFunc) {
 	if _, ok := h.active[key]; !ok {
 		h.active[key] = cancel
 	}
-	if _, ok := h.cells[key]; !ok {
-		h.cells[key] = &ambientCell{}
+	c, ok := h.cells[key]
+	if !ok {
+		c = &ambientCell{lastSpokenAt: h.now().Add(-h.minSpeak)} // first advance may speak immediately
+		h.cells[key] = c
+	} else if h.minSpeak > 0 && time.Since(c.lastSpokenAt) < h.minSpeak {
+		// re-started inside the min gap (a stream closed and reopened): backdate
+		// so a pending advance isn't held by the pre-restart clock
+		c.lastSpokenAt = h.now().Add(-h.minSpeak)
 	}
 }
 
@@ -117,9 +169,17 @@ func (s *Server) ambientLoop(ctx context.Context, key, srcID, id, title string, 
 			c.snapshot = snapshot
 			c.distillRev++
 		}
-		// L2 gate: speak only on a real advance, one utterance in flight.
+		// L2 gate: speak only on a real advance, one utterance in flight,
+		// outside quiet hours, and at least minSpeak since the last utterance.
 		speak := changed && !c.nudged && c.distillRev > c.spokenRev
 		if speak {
+			quietNow := s.ambient.quiet != nil && s.ambient.quiet()
+			tooSoon := time.Since(c.lastSpokenAt) < s.ambient.minSpeak
+			if quietNow || tooSoon {
+				c.mu.Unlock()
+				return // the advance is still recorded (snapshot/rev moved on);
+				// it will be spoken at the next qualifying tick
+			}
 			c.nudged = true
 		}
 		c.mu.Unlock()

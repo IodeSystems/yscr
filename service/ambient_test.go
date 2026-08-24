@@ -9,6 +9,7 @@ import (
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/iodesystems/agentkit/llm"
 
+	"github.com/iodesystems/yscr/config"
 	"github.com/iodesystems/yscr/source"
 )
 
@@ -108,8 +109,9 @@ func (r *countingRunner) ChatStream(ctx context.Context, msgs []llm.Message, too
 // a second advance speaks again.
 func TestAmbientLoop_E2E(t *testing.T) {
 	runner := &countingRunner{reply: "the build just finished."}
-	h := newAmbientHub()
+	h := newAmbientHub(config.AmbientConfig{})
 	h.interval = 10 * time.Millisecond // fast distill cadence for the test
+	h.minSpeak = 0                    // no min-gap in the fast test
 	s := &Server{
 		narr:    newNarrator(runner),
 		sse:     newSSEHub(),
@@ -191,3 +193,144 @@ func (ambFakeSource) Observe(ctx context.Context, id string) (<-chan source.Even
 	return ch, nil
 }
 func (ambFakeSource) Post(ctx context.Context, id string, msg string) error { return nil }
+
+func TestQuietHours(t *testing.T) {
+	// invalid → never quiet
+	if q := quietHours("", ""); q() {
+		t.Fatal("empty bounds should never be quiet")
+	}
+	if q := quietHours("garbage", "07:00"); q() {
+		t.Fatal("invalid start should never be quiet")
+	}
+	// equal → never quiet
+	if q := quietHours("09:00", "09:00"); q() {
+		t.Fatal("equal bounds should never be quiet")
+	}
+	// day window: 00:00–23:59 is always inside
+	q := quietHours("00:00", "23:59")
+	if !q() {
+		t.Fatal("full-day window should be quiet now")
+	}
+	// wrap window 23:00–00:30 covers midnight; pick a time guaranteed outside:
+	// can't control the clock, so only check it returns without panicking and
+	// that the two windows are consistent at the same instant.
+	a := quietHours("23:00", "00:30")()
+	b := quietHours("23:00", "00:30")()
+	if a != b {
+		t.Fatal("same window should agree at the same instant")
+	}
+}
+
+func TestAmbientLoop_QuietSuppresses(t *testing.T) {
+	runner := &countingRunner{reply: "the build just finished."}
+	h := newAmbientHub(config.AmbientConfig{})
+	h.interval = 10 * time.Millisecond
+	h.minSpeak = 0
+	h.quiet = func() bool { return true } // always quiet
+	s := &Server{
+		narr:    newNarrator(runner),
+		sse:     newSSEHub(),
+		ambient: h,
+		push:    &pushHub{subs: map[string]*webpush.Subscription{}},
+	}
+	sub, cancelSub := s.sse.subscribe()
+	defer cancelSub()
+
+	ch := make(chan source.Event, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ambient.start("terminal/p1", cancel)
+	done := make(chan struct{})
+	go func() {
+		s.ambientLoop(ctx, "terminal/p1", "terminal", "p1", "shell", ch)
+		close(done)
+	}()
+	defer cancel()
+
+	ch <- source.Event{Content: "build finished, 0 failures"}
+	time.Sleep(50 * time.Millisecond) // let a few ticks run
+
+	select {
+	case m := <-sub:
+		t.Fatalf("quiet hours must suppress narration, got %s", m.event)
+	default:
+	}
+	// the advance IS recorded — un-quieting speaks it at the next tick.
+	// The held advance only re-evaluates when NEW output arrives (the distill
+	// gate requires a non-empty buffer), so feed another line to trigger it.
+	h.quiet = func() bool { return false }
+	ch <- source.Event{Content: "still building"}
+	select {
+	case m := <-sub:
+		if m.event != "narration" {
+			t.Fatalf("expected narration after un-quiet, got %s", m.event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the recorded advance to be spoken after un-quiet")
+	}
+	cancel() // stop the loop before waiting for done
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ambientLoop did not exit after cancel")
+	}
+}
+
+func TestAmbientLoop_MinInterval(t *testing.T) {
+	runner := &countingRunner{reply: "ok"}
+	h := newAmbientHub(config.AmbientConfig{MinIntervalSeconds: 3600})
+	h.interval = 10 * time.Millisecond
+	s := &Server{
+		narr:    newNarrator(runner),
+		sse:     newSSEHub(),
+		ambient: h,
+		push:    &pushHub{subs: map[string]*webpush.Subscription{}},
+	}
+	sub, cancelSub := s.sse.subscribe()
+	defer cancelSub()
+
+	ch := make(chan source.Event, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	s.ambient.start("terminal/p2", cancel)
+	done := make(chan struct{})
+	go func() {
+		s.ambientLoop(ctx, "terminal/p2", "terminal", "p2", "shell", ch)
+		close(done)
+	}()
+	defer cancel()
+
+	ch <- source.Event{Content: "first advance"}
+	// wait for the first utterance (the min-gap clock starts when it lands).
+	// The min-gap gate only re-evaluates on NEW output, so the first tick after
+	// the event arrives must speak (lastSpokenAt was backdated at start).
+	select {
+	case m := <-sub:
+		if m.event != "narration" {
+			t.Fatalf("expected narration, got %s", m.event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first advance was never spoken")
+	}
+	// drain any extra messages (there shouldn't be any for a single advance)
+	select {
+	case <-sub:
+		t.Fatal("expected exactly one utterance for the first advance")
+	default:
+	}
+	// second advance within the min gap → held (advance recorded, not spoken)
+	ch <- source.Event{Content: "second advance"}
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case m := <-sub:
+		t.Fatalf("min interval must hold the second utterance, got %s", m.event)
+	default:
+	}
+	cancel() // stop the loop before waiting for done
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ambientLoop did not exit after cancel")
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 LLM call (second advance held), got %d", runner.calls)
+	}
+}

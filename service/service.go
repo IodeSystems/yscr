@@ -96,7 +96,7 @@ func New(cfg *config.Config) (*Server, error) {
 		sessionID:  "primary",
 	}
 	if cfg.Ambient.Enabled {
-		s.ambient = newAmbientHub()
+		s.ambient = newAmbientHub(cfg.Ambient)
 	}
 	s.summ = newSummarizer(runner, s.broadcastActivity, s.broadcastFleet)
 	// Outbound task scheduler (nil unless Cue.Enabled + Postgres). Drives off the

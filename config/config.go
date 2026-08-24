@@ -97,6 +97,14 @@ type VAPIDConfig struct {
 // AmbientConfig tunes the ambient auto-narration channel.
 type AmbientConfig struct {
 	Enabled bool `json:"enabled"` // master switch (default off)
+
+	// QuietHours, when set, pauses ambient narration between the two local
+	// times (HH:MM). A start after end means it wraps midnight (e.g. 22:00–07:00).
+	QuietStart string `json:"quiet_start"` // "HH:MM"
+	QuietEnd   string `json:"quiet_end"`   // "HH:MM"
+
+	// MinIntervalSeconds bounds how often one session may speak (default 60).
+	MinIntervalSeconds int `json:"min_interval_seconds"`
 }
 
 // CueConfig tunes the outbound task scheduler. The caps map onto cue.Caps; the
