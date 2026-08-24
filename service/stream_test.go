@@ -8,7 +8,7 @@ import (
 )
 
 func state(status source.Status, pending int) source.State {
-	st := source.State{Ref: source.SessionRef{Source: "autowork", ID: "t1", Title: "Fix bug"}, Status: status}
+	st := source.State{Ref: source.SessionRef{Source: "claude-code", ID: "t1", Title: "Fix bug"}, Status: status}
 	for i := 0; i < pending; i++ {
 		st.Pending = append(st.Pending, source.Questionnaire{ID: "q"})
 	}

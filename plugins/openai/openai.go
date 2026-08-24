@@ -1,11 +1,11 @@
 // Package openai is a source plugin whose sessions are OpenAI-spec
 // conversations the plugin drives itself, via agentkit, against corrallm (or
-// OpenRouter). Unlike the autowork plugin — which observes work living in a
+// OpenRouter). Unlike the pane adapters — which observe work living in a
 // remote daemon — here each session IS an agentkit conversation this process
 // owns: Spawn starts one, Post advances it, State reports the last reply.
 //
 // This is the "source that is an agent": it validates source.Source against a
-// backend with a completely different shape from autowork, and doubles as a
+// backend with a different shape from them, and doubles as a
 // smoke test of the concierge's own LLM endpoint (same corrallm base URL).
 package openai
 

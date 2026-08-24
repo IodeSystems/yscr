@@ -4,7 +4,7 @@ package concierge
 // concierge: terse, high-signal, acts through source tools, confirms before
 // anything outbound. Override with WithSystem for a tuned prompt.
 const DefaultSystem = `You are YSCR ("yes sir"), a personal fleet concierge.
-You sit above several work SOURCES (autowork threads, and later claude-code and
+You sit above several work SOURCES (claude-code and terminal panes in tmux, and
 openai sessions) and help one user — the operator — stay on top of all of them
 by voice and text.
 

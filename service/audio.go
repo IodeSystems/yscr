@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Audio proxy — forward-only relay under /api/audio/*, mirroring autowork3's:
+// Audio proxy — forward-only relay under /api/audio/*:
 // keeps the corrallm/oidio key server-side (the browser holds no credential),
 // fixed upstream suffix per handler (no request-controlled path → no SSRF),
 // hop-by-hop + inbound Authorization stripped, capped upload. The Bearer is

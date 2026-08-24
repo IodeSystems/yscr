@@ -7,9 +7,6 @@ todos, and schedules; run and watch commands; produce diagrams and detailed
 reports on request; and drive multi-step work toward completion — without ever
 leaving the conversation or looking at a screen.
 
-Extracted from [autowork3](https://github.com/IodeSystems/autowork3) so the
-concierge (and its Claude Code transport) lives as a personal tool, separate
-from the harness.
 
 ## Purpose
 
@@ -51,13 +48,12 @@ It drives every backend through one plugin contract — `source.Source`:
 
 | plugin | observe | spawn | act |
 |---|---|---|---|
-| **autowork** | fleet rollup + event feed (via autowork3 API) | new thread/issue | apply-decision, confirm-send |
 | **pane: claude** | live pane + JSONL transcript tail | new tmux session | answer questions (verified keystroke protocol) |
 | **pane: terminal** | scrollback + pipe-pane stream | — | — |
 | **openai** | conversation stream (corrallm/OpenRouter) | new conversation | — |
 
 **The crux — `source.Questionnaire`:** structured input requests (MCP tool
-schemas, autowork decision_requests, quizzes) are rendered *conversationally*
+schemas, structured program prompts, quizzes) are rendered *conversationally*
 by the handler model and parsed *back* into a schema-validated structured
 answer — the user faces a conversation, never a form.
 

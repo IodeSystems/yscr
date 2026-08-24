@@ -2,7 +2,6 @@
 // the seam that lets the concierge observe and drive heterogeneous session
 // sources uniformly:
 //
-//   - autowork    — threads in an autowork3 daemon (via its API)
 //   - claude-code — Claude Code CLI sessions in a tmux virtual terminal
 //   - openai      — generic OpenAI-spec conversations (corrallm / OpenRouter)
 //
@@ -12,7 +11,7 @@
 //
 // Capability split: every source can be observed (Source). Sources that can
 // start work implement Spawner; sources with backend-specific mediated
-// actions (autowork's apply-decision / confirm-send) implement Actor. Keeping
+// actions) implement Actor. Keeping
 // spawn/act optional keeps a read-only source (e.g. a status-only feed) valid.
 package source
 
@@ -27,8 +26,8 @@ var ErrUnsupported = errors.New("source: unsupported operation")
 
 // SessionRef identifies one session within a source.
 type SessionRef struct {
-	Source string // plugin id — "autowork" | "claude-code" | "openai"
-	ID     string // source-local session id (autowork thread id, tmux name, …)
+	Source string // plugin id — "claude-code" | "terminal" | "openai"
+	ID     string // source-local session id (tmux pane/window, conversation id, …)
 	Title  string
 	Dir    string // working directory, when the source has one (claude-code); optional
 }
@@ -56,7 +55,7 @@ type State struct {
 }
 
 // Questionnaire is a structured request for user input a source surfaces — an
-// MCP tool's input schema, an autowork decision_request (with an action
+// MCP tool's input schema, a structured prompt from a program (with an action
 // choice + questions), a quiz, a staged-send confirmation (a degenerate
 // yes/no). It is THE crux of the concierge: the handler model renders a
 // Questionnaire CONVERSATIONALLY (voice/text) and parses free-form answers
@@ -146,7 +145,7 @@ type Source interface {
 }
 
 // SpawnSpec describes new work to start. Fields are advisory — each source
-// maps what it can (autowork: Title→thread name, Prompt→first issue;
+// maps what it can;
 // claude-code: Dir→working directory, Prompt→the initial CLI prompt;
 // openai: Prompt→first message).
 type SpawnSpec struct {
@@ -165,13 +164,13 @@ type Spawner interface {
 // perform on the user's behalf. Name is the verb ("apply_decision",
 // "confirm_send"); Args is the source-interpreted payload. Kept generic so
 // the concierge core stays source-agnostic — the security gating lives in the
-// source (e.g. autowork keeps its send-gate + confused-deputy checks).
+// source (a program keeps its own permissioning).
 type Action struct {
 	Name string
 	Args map[string]any
 }
 
-// Actor is the optional capability for mediated actions (autowork's
+// Actor is the optional capability for mediated actions (a program's
 // apply-decision / confirm-send). Returns a human-readable result.
 type Actor interface {
 	Source

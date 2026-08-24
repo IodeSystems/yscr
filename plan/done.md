@@ -9,7 +9,7 @@
 - **Goal plans (core)** — dependency axis on the cue release gate (`PlanWithStatus` + `ValidateDeps`, durable `cue_tasks.deps`), generator proposes edges with deterministic cycle/unknown-dep relaxation, open-questions queue (`questions/` pkg + Postgres + ask/list/answer tools + PWA "I need from you" tap-to-answer).
 - **Task cueing system** — generator → durable cue → deterministic release gate → autonomous dispatch (rails: kill-switch/dry-run/caps/hourly) → completion reconcile. Ships OFF.
 - **source.Source contract (Slice 0)** + Questionnaire crux; three backends validate it (autowork, openai, pane:claude).
-- **P1 autowork3 source API** — fleet / fleet/decisions / fleet/stream public (autowork3 `87b8bd3`, `bcc5dd9`, `bee6840`).
+- **autowork source removed** — yscr is purely a tmux-pane mediary now (claude-code, terminal) + openai sessions; plugin, config, and all references deleted.
 - **PWA** — installable; chat, horizontal fleet card scroller, detail sheet, "Needs you" tap-to-answer (`POST /api/answer`, no LLM), web push (VAPID auto-keypair).
 - **Voice** — audio proxy (STT/TTS) + PWA mic/TTS with barge-in suppression; streaming STT prototype (realtime WS relay + PCM worklet) verified backend-side.
 - **Postgres durable store** — conversation survives restart; push subs; cue_tasks.

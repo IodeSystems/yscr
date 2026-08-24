@@ -4,7 +4,7 @@
 //
 // The LLM endpoint is swappable — the caller passes any agent.LLMRunner
 // (llm.NewClient pointed at corrallm / OpenRouter / a claude-code-tmux bridge).
-// The concierge owns its OWN conversation store (yscr's, not autowork3's).
+// The concierge owns its OWN conversation store.
 package concierge
 
 import (
@@ -191,7 +191,7 @@ func toolDef(name, desc string, params map[string]any) llm.ToolDef {
 var conciergeTools = []llm.ToolDef{
 	toolDef("fleet_status", "List every live session across all sources with a one-line status. Call this first when the user asks what's going on.", objSchema(map[string]any{})),
 	toolDef("pull_detail", "Get the detailed rollup for one session (status, blockers, and any questionnaires awaiting the user).", objSchema(map[string]any{
-		"source": strProp("the source id, e.g. autowork"),
+		"source": strProp("the source id, e.g. claude-code"),
 		"id":     strProp("the session id within that source"),
 	}, "source", "id")),
 	toolDef("read_history", "Read the recent conversation of one session — what it and the user have actually been saying, beyond the one-line status. Use when the user asks what a session has been doing, or before posting so you have context. Not every source supports this.", objSchema(map[string]any{

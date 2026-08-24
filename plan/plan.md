@@ -22,13 +22,11 @@ without ever leaving the conversation or looking at a screen.
 
 | plugin | Source | Spawner | Actor |
 |---|---|---|---|
-| **autowork** | fleet rollup + event feed (via autowork3 API) | new thread/issue | apply-decision, confirm-send |
 | **pane: claude** | live pane + JSONL transcript tail | new tmux session | answer questions (verified keystroke protocol) |
 | **pane: terminal** | scrollback + pipe-pane stream | — | — |
 | **openai** | conversation token stream (corrallm/OpenRouter) | new conversation | — |
 
-Security stays in the source: autowork keeps its send-gate + confused-deputy
-checks; the concierge only mediates (read-back → confirm → call `Act`).
+A program keeps its own permissioning; the concierge only reads and types.
 
 ## Subplans
 
@@ -40,7 +38,7 @@ checks; the concierge only mediates (read-back → confirm → call `Act`).
 | `plan/decision-memory.md` | decision log, preference auto-resolve | ✅ core done |
 | `plan/audio.md` | medium-aware verbosity ✅, ambient narration ✅ (quiet hours + min-interval); streaming STT live drive | ◐ |
 | `plan/ops.md` | systemd unit ✅, durable session registries ✅, optional auth ✅ | ✅ |
-| `plan/cutover.md` | P3 — delete in-process YSCR from autowork3, repoint Android client | ◻ |
+| `plan/cutover.md` | (superseded) autowork source removed from yscr; remaining work is on the autowork3 side | ⏸ |
 
 Historical design docs (membrane origin, Android client) → `plan/archive/`.
 
@@ -101,9 +99,9 @@ dispatch (rails) → completion reconcile. Every seam unit-tested.
 the capability split — `Source` (List/State/Observe/Post) + optional `Spawner`
 + optional `Actor` (generic `Act(Action{Name,Args})`) — and the
 **`Questionnaire`/`Field`/`Option`/`Answer`** crux (form↔conversation,
-schema-validated via `source.Validate`). Three backends satisfy it: a remote
-HTTP daemon (autowork), in-process agentkit conversations (openai), tmux-hosted
-CLIs (pane: claude) — the strongest validation the contract holds.
+schema-validated via `source.Validate`). Two backend shapes validate it:
+in-process agentkit conversations (openai) and tmux-hosted CLIs/panes
+(claude, terminal).
 
 ### ✅ Pluggable pane source — generic tmux source + program adapters
 `plugins/claudecode` → `plugins/pane`: a generic Source shell (tmux plumbing +
@@ -192,12 +190,6 @@ hook payload; write = tmux send-keys.**
   shown (card).
 
 ### ✅ P2 — yscr service + PWA
-- ✅ **autowork plugin** (`plugins/autowork`) — HTTP client implementing
-  `Source` + `Spawner` against autowork3's public API (List/State/Observe(SSE)/
-  Post/Spawn); decision_requests → `Questionnaire`; Act: apply_decision →
-  grouped `SubmitDecision`, confirm_send → `ConfirmSend`. Send-gate/
-  confused-deputy gating stays in autowork3. (The P1 seam — fleet, fleet/
-  decisions, fleet/stream endpoints — is fully public on the autowork3 side.)
 - ✅ **openai plugin** (`plugins/openai`) — a source whose sessions ARE agentkit
   conversations this process drives against corrallm/OpenRouter. Validates the
   contract against a non-remote backend. (Observe is one-shot today; no
@@ -253,8 +245,9 @@ hook payload; write = tmux send-keys.**
 ## Decisions / conventions
 - Module path `github.com/iodesystems/yscr` is FINAL. Public repo.
 - Concierge = agentkit consumer; never re-implement the tool loop / compaction.
-- autowork is reached via its **public API only** (client-token auth) — no
-  shared DB. Security gating stays in autowork3.
+- yscr has NO external-work plugin: it mediates tmux panes (claude-code,
+  terminal) + openai sessions. A program keeps its own permissioning; the
+  concierge only reads and types.
 - **LLM proposes, deterministic layer validates.** The model proposes tasks/
   answers/plans; a thin deterministic gate (validate/dedupe/caps/persist) is the
   hot path. Cue's design set this line — keep it for scratchpad, decision

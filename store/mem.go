@@ -1,6 +1,6 @@
 // Package store provides agent.Store implementations for the concierge's own
 // conversation persistence (yscr keeps its concierge convo in its OWN store —
-// autowork threads live in autowork3, but the membrane dialogue is yscr's).
+// session state lives in the programs themselves; the concierge dialogue is yscr's).
 package store
 
 import (

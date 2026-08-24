@@ -21,8 +21,6 @@ type Config struct {
 	// LLM is the concierge's own endpoint (corrallm / OpenRouter).
 	LLM LLMConfig `json:"llm"`
 
-	// Autowork, when Enabled, registers the autowork source plugin.
-	Autowork AutoworkConfig `json:"autowork"`
 
 	// OpenAISessions enables the openai source (agentkit conversations on the
 	// same LLM endpoint the concierge uses).
@@ -62,12 +60,6 @@ type LLMConfig struct {
 	BaseURL string `json:"base_url"` // e.g. http://192.168.1.76:8111
 	Model   string `json:"model"`    // e.g. qwen3-6-27b-mpt
 	APIKey  string `json:"api_key"`  // env YSCR_LLM_KEY overrides
-}
-
-type AutoworkConfig struct {
-	Enabled bool   `json:"enabled"`
-	BaseURL string `json:"base_url"` // e.g. http://127.0.0.1:8402
-	Token   string `json:"token"`    // client bearer; env YSCR_AUTOWORK_TOKEN overrides
 }
 
 type ClaudeCodeConfig struct {
@@ -217,9 +209,6 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("YSCR_AUDIO_KEY"); v != "" {
 		c.Audio.APIKey = v
-	}
-	if v := os.Getenv("YSCR_AUTOWORK_TOKEN"); v != "" {
-		c.Autowork.Token = v
 	}
 	return c, nil
 }

@@ -15,7 +15,6 @@ import (
 
 	"github.com/iodesystems/yscr/concierge"
 	"github.com/iodesystems/yscr/config"
-	"github.com/iodesystems/yscr/plugins/autowork"
 	"github.com/iodesystems/yscr/plugins/openai"
 	"github.com/iodesystems/yscr/plugins/pane"
 	"github.com/iodesystems/yscr/plugins/pane/claude"
@@ -66,9 +65,6 @@ func New(cfg *config.Config) (*Server, error) {
 
 	var sources []source.Source
 	var openaiSrc *openai.Plugin
-	if cfg.Autowork.Enabled {
-		sources = append(sources, autowork.New(cfg.Autowork.BaseURL, cfg.Autowork.Token, nil))
-	}
 	if cfg.OpenAISessions {
 		// Durable when Postgres is available: the conversation store (entries
 		// table) already persists every session's log; NewWithStore rebuilds

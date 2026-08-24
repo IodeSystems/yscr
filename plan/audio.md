@@ -15,7 +15,7 @@ medium never reaches the model.
    sentences when speaking; no lists, no code"). PWA sets it from speak-mode /
    input modality. Cheap; makes future audio a consumer of an existing contract.
 2. **Narration materiality port** — distill L1 / utterance L2 materiality-gate /
-   durable summary from autowork3's `yscr_status.go` for the voice progress
+   durable summary (the two-stage gate ported from an earlier design) for the voice progress
    channel (currently narrate re-LLMs every 8s delta unconditionally).
 3. **Ambient auto-narration** — active sessions narrate without a per-session
    toggle; push delivery (`Notify`) when the phone isn't looking. Requires #2's
@@ -36,7 +36,7 @@ medium never reaches the model.
   spoken). Text-only turns cost nothing. Tested: coalesced text+voice turn
   carries the hint.
 - ✅ **#2 + #3 ambient auto-narration with the materiality port** (`service/ambient.go`).
-  The two-stage gate from autowork3's `yscr_status.go`, adapted: **L1 distill** is
+  The two-stage gate (ported from an earlier design), adapted: **L1 distill** is
   deterministic (last meaningful line of the raw delta — no LLM call) and only
   advances the world-model rev when the snapshot CHANGES; **L2 materiality gate**
   speaks only on a real advance with one utterance in flight, so an unchanged

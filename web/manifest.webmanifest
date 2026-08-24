@@ -1,7 +1,7 @@
 {
   "name": "YSCR — fleet concierge",
   "short_name": "YSCR",
-  "description": "Your voice-first fleet concierge across autowork, claude-code, and openai sessions.",
+  "description": "Your conversational mediary for terminal sessions — read, watch, and drive tmux panes.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

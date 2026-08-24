@@ -1,14 +1,9 @@
 # Subplan — P3 cutover (autowork3 → yscr)
 
-> Delete the in-process YSCR from autowork3; yscr becomes the only concierge.
-
-## Requirements
-1. Delete from autowork3: `yscr.go`, `yscr_status.go`, the `notifyYSCR` hook
-   (api.go), the `yscr` role + tools + prompt, `sessions.yscr_summary` column.
-2. Split the shared membrane cores (`concierge.go`, `confirm_send`) — membrane
-   logic → yscr; send-execution stays in autowork3.
-3. Repoint the Android client (`com.iodesystems.yscr`) at the yscr service.
-4. Fix `0002_seed.down.sql` (omits `yscr` role cleanup).
+> SUPERSEDED: the autowork source plugin was deleted from yscr — yscr is now
+> purely a tmux-pane mediary (claude-code, terminal adapters) + openai sessions.
+> The remaining work lives on the autowork3 side only (deleting its in-process
+> YSCR role); nothing here blocks yscr.
 
 ## Status
-◻ todo — not started. Blocked on nothing in yscr; coordinated with autowork3.
+⏸ parked — out of scope for this repo going forward.

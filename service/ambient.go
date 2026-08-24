@@ -3,7 +3,7 @@
 //
 // The per-session Narrate toggle re-LLMs every tick unconditionally. Ambient
 // narration runs for EVERY session, so it needs a two-stage gate ported from
-// autowork3's yscr_status.go:
+// the materiality model ported from an earlier design (L1 distill / L2 gate):
 //
 //	L1 distill — fold the raw output buffer into a one-line world-model
 //	    snapshot (deterministic: the last meaningful line). The snapshot only
@@ -36,7 +36,7 @@ import (
 const defaultAmbientInterval = 8 * time.Second // one L1 distill per session per tick
 
 // ambientCell is one session's narration pipeline state (L1 rev + L2 gate),
-// the in-memory half of autowork3's yscrProgress. Ephemeral: a restart just
+// The in-memory progress state per session. Ephemeral: a restart just
 // re-distills, which is cheap and harmless.
 type ambientCell struct {
 	mu           sync.Mutex
