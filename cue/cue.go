@@ -34,7 +34,7 @@ type Task struct {
 // Target says where a task should go: an existing session (Source+SessionID,
 // dispatched via source.Source.Post) or a new one (Spawn, via source.Spawner).
 type Target struct {
-	Source    string // plugin id — "claude-code" | "terminal" | "openai"
+	Source    string // plugin id — "claude-code" | "terminal"
 	SessionID string // existing session; empty + Spawn ⇒ new session
 	Spawn     bool   // request a new session instead of routing to an existing one
 	SpawnDir  string // cwd for a spawn (claude-code), optional

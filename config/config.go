@@ -22,10 +22,6 @@ type Config struct {
 	LLM LLMConfig `json:"llm"`
 
 
-	// OpenAISessions enables the openai source (agentkit conversations on the
-	// same LLM endpoint the concierge uses).
-	OpenAISessions bool `json:"openai_sessions"`
-
 	// ClaudeCode enables the tmux Claude Code source.
 	ClaudeCode ClaudeCodeConfig `json:"claude_code"`
 

@@ -50,7 +50,6 @@ It drives every backend through one plugin contract — `source.Source`:
 |---|---|---|---|
 | **pane: claude** | live pane + JSONL transcript tail | new tmux session | answer questions (verified keystroke protocol) |
 | **pane: terminal** | scrollback + pipe-pane stream | — | — |
-| **openai** | conversation stream (corrallm/OpenRouter) | new conversation | — |
 
 **The crux — `source.Questionnaire`:** structured input requests (MCP tool
 schemas, structured program prompts, quizzes) are rendered *conversationally*

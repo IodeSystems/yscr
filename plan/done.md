@@ -8,8 +8,9 @@
 - **Narrate** — LLM delta summary → TTS, per-session toggle (`service/narrate.go`).
 - **Goal plans (core)** — dependency axis on the cue release gate (`PlanWithStatus` + `ValidateDeps`, durable `cue_tasks.deps`), generator proposes edges with deterministic cycle/unknown-dep relaxation, open-questions queue (`questions/` pkg + Postgres + ask/list/answer tools + PWA "I need from you" tap-to-answer).
 - **Task cueing system** — generator → durable cue → deterministic release gate → autonomous dispatch (rails: kill-switch/dry-run/caps/hourly) → completion reconcile. Ships OFF.
-- **source.Source contract (Slice 0)** + Questionnaire crux; three backends validate it (autowork, openai, pane:claude).
-- **autowork source removed** — yscr is purely a tmux-pane mediary now (claude-code, terminal) + openai sessions; plugin, config, and all references deleted.
+- **source.Source contract (Slice 0)** + Questionnaire crux; validated by the tmux-hosted CLIs/panes (claude, terminal).
+- **autowork source removed** — yscr is purely a tmux-pane mediary now (claude-code, terminal); plugin, config, and all references deleted.
+- **openai source removed** — the concierge is just an agentkit session on corrallm; no separate conversation-source plugin. Plugin, smoke command, config, and references deleted.
 - **PWA** — installable; chat, horizontal fleet card scroller, detail sheet, "Needs you" tap-to-answer (`POST /api/answer`, no LLM), web push (VAPID auto-keypair).
 - **Voice** — audio proxy (STT/TTS) + PWA mic/TTS with barge-in suppression; streaming STT prototype (realtime WS relay + PCM worklet) verified backend-side.
 - **Postgres durable store** — conversation survives restart; push subs; cue_tasks.
@@ -18,7 +19,6 @@
 - **Deploy** — hz dev proxy, valid TLS at https://ysr.iodesystems.com; `.air.toml` hot-reload in `yscr-air` tmux.
 - **oidio endpoint silence configurable** (`../services/oidio`) — rule1/2/3 yaml knobs.
 - **Ambient quiet hours + min-interval gate** — `ambient.quiet_start/end` (HH:MM, wraps midnight) + `min_interval_seconds` (default 60); a held advance stays recorded and speaks at the next qualifying tick.
-- **Durable openai session registry** — `RestoreFromStore` rebuilds in-memory metas from Postgres entry logs on start; sessions survive a restart (verified live).
 - **systemd unit (user scope)** — `~/.config/systemd/user/yscr.service`, enabled + running; reboot-persistence for the daemon.
 - **Optional auth** — bearer-token middleware on /api/* when `auth.token` is set (env YSCR_AUTH_TOKEN); PWA shell stays open; off by default.
 - **Scratchpad — todos + schedules** (`c7bd92a`) — scratchpad pkg (Task/Store, cron), Postgres store, concierge task tools, /api/tasks + PWA work list, scheduler tick (one-shots → cue; cron re-arm).

@@ -24,7 +24,6 @@ without ever leaving the conversation or looking at a screen.
 |---|---|---|---|
 | **pane: claude** | live pane + JSONL transcript tail | new tmux session | answer questions (verified keystroke protocol) |
 | **pane: terminal** | scrollback + pipe-pane stream | — | — |
-| **openai** | conversation token stream (corrallm/OpenRouter) | new conversation | — |
 
 A program keeps its own permissioning; the concierge only reads and types.
 
@@ -100,8 +99,7 @@ the capability split — `Source` (List/State/Observe/Post) + optional `Spawner`
 + optional `Actor` (generic `Act(Action{Name,Args})`) — and the
 **`Questionnaire`/`Field`/`Option`/`Answer`** crux (form↔conversation,
 schema-validated via `source.Validate`). Two backend shapes validate it:
-in-process agentkit conversations (openai) and tmux-hosted CLIs/panes
-(claude, terminal).
+the tmux-hosted CLIs/panes (claude, terminal).
 
 ### ✅ Pluggable pane source — generic tmux source + program adapters
 `plugins/claudecode` → `plugins/pane`: a generic Source shell (tmux plumbing +
@@ -190,10 +188,6 @@ hook payload; write = tmux send-keys.**
   shown (card).
 
 ### ✅ P2 — yscr service + PWA
-- ✅ **openai plugin** (`plugins/openai`) — a source whose sessions ARE agentkit
-  conversations this process drives against corrallm/OpenRouter. Validates the
-  contract against a non-remote backend. (Observe is one-shot today; no
-  Historian despite the doc comment — thinnest of the three.)
 - ✅ **concierge on agentkit** (`concierge/`) — an `agent.Session` with a
   source-aware toolset (fleet_status / pull_detail / read_history / post /
   spawn / answer_questionnaire) dispatching into the contract; swappable LLM
@@ -230,9 +224,6 @@ hook payload; write = tmux send-keys.**
 ### ◐ P2 remaining / ops
 - ◻ **systemd unit** for yscr — the dev auto-reload (`.air.toml` in a detached
   `yscr-air` tmux session; hot-reload verified) dies on reboot. → `plan/ops.md`
-- ◻ **session registries in-memory** — openai/claude-code forget their sessions
-  across restart (the tmux/convo survive, but the plugin doesn't list them).
-  The claude index is on disk already; wire it back on start. → `plan/ops.md`
 - ✅ **narration → push** — ambient narrations fan out via `Notify` (per-session narrate stays SSE-only).
 - ◐ **streaming STT** (`service/realtime.go`, `web/pcm-worklet.js`) — oidio's
   realtime WS proxied at `GET /api/audio/realtime`; PCM worklet resamples mic →
@@ -246,7 +237,7 @@ hook payload; write = tmux send-keys.**
 - Module path `github.com/iodesystems/yscr` is FINAL. Public repo.
 - Concierge = agentkit consumer; never re-implement the tool loop / compaction.
 - yscr has NO external-work plugin: it mediates tmux panes (claude-code,
-  terminal) + openai sessions. A program keeps its own permissioning; the
+  terminal). A program keeps its own permissioning; the
   concierge only reads and types.
 - **LLM proposes, deterministic layer validates.** The model proposes tasks/
   answers/plans; a thin deterministic gate (validate/dedupe/caps/persist) is the

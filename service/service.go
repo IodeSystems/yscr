@@ -15,7 +15,6 @@ import (
 
 	"github.com/iodesystems/yscr/concierge"
 	"github.com/iodesystems/yscr/config"
-	"github.com/iodesystems/yscr/plugins/openai"
 	"github.com/iodesystems/yscr/plugins/pane"
 	"github.com/iodesystems/yscr/plugins/pane/claude"
 	"github.com/iodesystems/yscr/plugins/pane/terminal"
@@ -64,18 +63,6 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	var sources []source.Source
-	var openaiSrc *openai.Plugin
-	if cfg.OpenAISessions {
-		// Durable when Postgres is available: the conversation store (entries
-		// table) already persists every session's log; NewWithStore rebuilds
-		// the in-memory registry from it on start so sessions survive a restart.
-		var os agent.Store = store.NewMem()
-		if pg != nil {
-			os = pg
-		}
-		openaiSrc = openai.New(runner, os, "")
-		sources = append(sources, openaiSrc)
-	}
 	if cfg.ClaudeCode.Enabled {
 		adapters := []pane.Adapter{claude.New(claude.Config{Command: cfg.ClaudeCode.Command})}
 		if cfg.ClaudeCode.TerminalPanes {
@@ -144,11 +131,6 @@ func New(cfg *config.Config) (*Server, error) {
 			s.conc.WithRun(src, s.waitShellIdle, s.runSummarize)
 			break
 		}
-	}
-	// Durable openai registry: rebuild in-memory session metas from the
-	// persisted conversation logs so a restart re-lists prior sessions.
-	if openaiSrc != nil && pg != nil {
-		openaiSrc.RestoreFromStore(context.Background(), pg)
 	}
 	return s, nil
 }

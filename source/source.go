@@ -3,7 +3,6 @@
 // sources uniformly:
 //
 //   - claude-code — Claude Code CLI sessions in a tmux virtual terminal
-//   - openai      — generic OpenAI-spec conversations (corrallm / OpenRouter)
 //
 // The concierge (an agentkit session with a swappable LLM endpoint + audio
 // via oidio) never special-cases a backend: it lists, observes, and acts
@@ -26,7 +25,7 @@ var ErrUnsupported = errors.New("source: unsupported operation")
 
 // SessionRef identifies one session within a source.
 type SessionRef struct {
-	Source string // plugin id — "claude-code" | "terminal" | "openai"
+	Source string // plugin id — "claude-code" | "terminal"
 	ID     string // source-local session id (tmux pane/window, conversation id, …)
 	Title  string
 	Dir    string // working directory, when the source has one (claude-code); optional
@@ -147,7 +146,7 @@ type Source interface {
 // SpawnSpec describes new work to start. Fields are advisory — each source
 // maps what it can;
 // claude-code: Dir→working directory, Prompt→the initial CLI prompt;
-// openai: Prompt→first message).
+// terminal: Prompt→typed command).
 type SpawnSpec struct {
 	Title  string
 	Prompt string
@@ -180,7 +179,7 @@ type Actor interface {
 // Historian is the optional capability to read a session's recent message
 // history — the conversation the State digest deliberately can't carry (State
 // is a one-line rollup). Sources with a durable transcript (claude-code's
-// JSONL, openai's conversation store) implement it; the concierge exposes it as
+// JSONL, scrollback) implement it; the concierge exposes it as
 // the read_history tool so it can answer "what has this session been doing?"
 // without the user dropping into the terminal.
 type Historian interface {
