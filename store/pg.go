@@ -665,3 +665,22 @@ func (pg *PG) ListDecisions(ctx context.Context, statuses ...string) ([]Decision
 	}
 	return out, rows.Err()
 }
+
+// SessionIDs lists every session id with at least one non-compacted entry —
+// used to rebuild the openai plugin's registry on restart.
+func (p *PG) SessionIDs(ctx context.Context) ([]string, error) {
+	rows, err := p.pool.Query(ctx, `SELECT DISTINCT session_id FROM entries WHERE compacted_into IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}

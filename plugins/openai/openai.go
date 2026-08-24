@@ -169,3 +169,65 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// ── durable registry (ops: sessions survive a restart) ──────────────
+
+// StoreReader is the read side of an agent.Store — *store.PG and *store.Mem
+// both satisfy it. Kept local so the plugin doesn't import yscr/store.
+type StoreReader interface {
+	Context(ctx context.Context, sessionID string) ([]agent.Entry, error)
+}
+
+// RestoreFromStore rebuilds the in-memory registry from a durable store: for
+// each persisted session log it recovers the title (first user message,
+// truncated), the last reply as summary, and an idle status. A fresh process
+// then lists and drives prior sessions again — Post re-enters through turn(),
+// which appends to the same persisted log.
+func (p *Plugin) RestoreFromStore(ctx context.Context, st StoreReader) {
+	if st == nil {
+		return
+	}
+	for _, id := range p.knownSessionIDs(ctx, st) {
+		p.restoreOne(ctx, st, id)
+	}
+}
+
+// knownSessionIDs asks the store for session ids. *store.PG exposes this; a
+// plain StoreReader (tests) has no listing, so the caller passes ids via
+// RestoreFromStore's fallback: we probe nothing and rely on the PG method.
+func (p *Plugin) knownSessionIDs(ctx context.Context, st StoreReader) []string {
+	if l, ok := st.(interface{ SessionIDs(context.Context) ([]string, error) }); ok {
+		ids, err := l.SessionIDs(ctx)
+		if err != nil {
+			return nil
+		}
+		return ids
+	}
+	return nil
+}
+
+// restoreOne rebuilds one session's meta from its persisted entry log.
+func (p *Plugin) restoreOne(ctx context.Context, st StoreReader, id string) {
+	entries, err := st.Context(ctx, id)
+	if err != nil || len(entries) == 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, ok := p.sess[id]; ok {
+		return // already known (Spawn'd this process)
+	}
+	title, summary, updated := "", "", int64(0)
+	for _, e := range entries {
+		updated = e.CreatedAt
+		switch e.Kind {
+		case agent.KindUser:
+			if title == "" {
+				title = truncate(e.Content, 60)
+			}
+		case agent.KindAssistant:
+			summary = truncate(e.Content, 200)
+		}
+	}
+	p.sess[id] = &meta{id: id, title: title, status: source.StatusIdle, summary: summary, updated: updated}
+}
