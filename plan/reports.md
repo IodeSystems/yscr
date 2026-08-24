@@ -39,8 +39,11 @@ the concierge produces:
 - PWA: `renderReply` extracts `<diagram>` blocks from a concierge bubble and
   renders the SVG inline (styles.css .msg .diagram).
 
+- ✅ **PWA reports listing** — `GET /api/reports` (newest-first .md artifacts) +
+  `GET /api/reports/{name}` (base-name validated, no traversal); "Reports"
+  section in the PWA, tap opens the markdown. A write_report artifact is now
+  openable, not just a path in chat.
+
 Remaining (icebox-grade):
-- Reports section in the PWA listing `~/.yscr/reports/` artifacts (openable,
-  downloadable) — today the path is in the chat reply.
 - Mermaid-in-markdown as an alternative renderer for non-SVG surfaces.
 - Diagram of the open-questions → task dependency links.

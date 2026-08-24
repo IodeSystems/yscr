@@ -78,6 +78,7 @@ async function loadFleet() {
     renderQuestions(sessions);
     loadOpenQuestions();
     loadDecisions();
+    loadReports();
     loadTasks();
     box.innerHTML = "";
     if (!sessions || !sessions.length) {
@@ -1080,6 +1081,35 @@ async function loadDecisions() {
   }
 }
 
+
+// ── reports (persisted artifacts from write_report) ────────────────
+async function loadReports() {
+  const box = $("#reports");
+  let rs = [];
+  try {
+    const r = await api("/api/reports");
+    if (r.ok) rs = (await r.json()).reports || [];
+  } catch (e) { return; }
+  const shown = rs.slice(0, 10);
+  if (!shown.length) { box.hidden = true; box.innerHTML = ""; return; }
+  box.hidden = false;
+  box.innerHTML = `<div class="secthead">Reports</div>`;
+  for (const rep of shown) {
+    const card = document.createElement("div");
+    card.className = "qcard";
+    const head = document.createElement("div");
+    head.className = "qhead";
+    head.textContent = new Date(rep.mod_time * 1000).toLocaleString();
+    card.append(head);
+    const link = document.createElement("a");
+    link.className = "qtext reportlink";
+    link.href = "/api/reports/" + encodeURIComponent(rep.name);
+    link.target = "_blank";
+    link.textContent = rep.name.replace(/\.md$/, "");
+    card.append(link);
+    box.append(card);
+  }
+}
 // ── open questions (concierge's parked ambiguities) ────────────────
 // The work-around-ambiguity queue: questions the concierge parked while it kept
 // working. Answer by tap (POST /api/questions/{id}/answer — no LLM) or in chat.

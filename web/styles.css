@@ -219,3 +219,6 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 
 /* render_diagram — inline SVG in a concierge bubble */
 .msg .diagram svg { max-width: 100%; height: auto; border-radius: 8px; background: #1c1e22; margin: 6px 0; }
+
+.reportlink { color: inherit; text-decoration: none; }
+.reportlink:hover { text-decoration: underline; }

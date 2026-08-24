@@ -181,6 +181,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/questions", s.handleQuestions)
 	mux.HandleFunc("POST /api/questions/{id}/answer", s.handleQuestionAnswer)
 	mux.HandleFunc("GET /api/decisions", s.handleDecisions)
+	mux.HandleFunc("GET /api/reports", s.handleReports)
+	mux.HandleFunc("GET /api/reports/{name}", s.handleReport)
 	mux.HandleFunc("POST /api/answer", s.handleAnswer)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
