@@ -1,6 +1,8 @@
 package terminal
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -134,7 +136,7 @@ func TestQueryHistory_FramesAcrossSegments(t *testing.T) {
 		t.Fatalf("segments after one change = %+v", segs)
 	}
 	s.ProgramChanged("htop", Frames, 4) // a DIFFERENT program → new frames segment
-	s.AppendFrame(5, "C") // its first frame renders full
+	s.AppendFrame(5, "C")               // its first frame renders full
 	segs = s.Segments()
 	t.Logf("segments now: %+v", segs)
 	out := s.QueryHistory(Query{})
@@ -211,5 +213,67 @@ func TestSession_ConcurrentFeed(t *testing.T) {
 	<-done
 	if len(s.Segments()) != 1 {
 		t.Fatal("segment count changed under concurrency")
+	}
+}
+
+// TestQuery_FrameFull — FrameFull renders keyframe CONTENT (not diffs): tail
+// counts frames, and grep finds text that is STABLE on screen (which diffs
+// never carry).
+func TestQuery_FrameFull(t *testing.T) {
+	s := NewSession("p", "claude", Frames, 0)
+	// Three states; "chrome" is stable across all of them — it appears in NO diff.
+	s.AppendFrame(1, "chrome\nfirst")
+	s.AppendFrame(2, "chrome\nsecond")
+	s.AppendFrame(3, "chrome\nthird")
+
+	// Diff mode: the diff stream carries only what CHANGED — stable text never
+	// appears in it. (Frame 1 renders as a full screen because there is no
+	// previous frame to diff against; that is the seed, not a change.)
+	diff := s.QueryHistory(Query{Tail: 40})
+	if !strings.Contains(diff, "+second") || !strings.Contains(diff, "+third") {
+		t.Errorf("diff tail missing changes: %q", diff)
+	}
+	gd := s.QueryHistory(Query{Grep: "chrome"})
+	if strings.Count(gd, "chrome") != 1 {
+		t.Errorf("grep over diffs should find stable text only in the seed frame (1), got %d: %q", strings.Count(gd, "chrome"), gd)
+	}
+
+	// FrameFull mode: tail 2 = the last two FRAMES in full; grep finds chrome
+	// in every frame — including states the diff stream never showed.
+	full := s.QueryHistory(Query{FrameFull: true, Tail: 2})
+	fmt.Fprintf(os.Stderr, "DEBUG full=%q\n", full)
+	if strings.Contains(full, "first") {
+		t.Errorf("frame tail 2 must drop frame 1: %q", full)
+	}
+	if !strings.Contains(full, "second") || !strings.Contains(full, "third") {
+		t.Errorf("frame tail 2 missing frames: %q", full)
+	}
+	hit := s.QueryHistory(Query{FrameFull: true, Grep: "chrome"})
+	if strings.Count(hit, "chrome") != 3 {
+		t.Errorf("grep over full frames should hit all 3, got %d in %q", strings.Count(hit, "chrome"), hit)
+	}
+
+	// Head counts frames too.
+	head := s.QueryHistory(Query{FrameFull: true, Head: 1})
+	if !strings.Contains(head, "first") || strings.Contains(head, "second") {
+		t.Errorf("frame head 1 wrong: %q", head)
+	}
+}
+
+// TestAppendFrame_DropsDuplicates — an unchanged capture stores nothing; the
+// 5000-frame cap drops the oldest.
+func TestAppendFrame_DropsDuplicates(t *testing.T) {
+	s := NewSession("p", "claude", Frames, 0)
+	s.AppendFrame(1, "same")
+	s.AppendFrame(2, "same") // identical → dropped
+	s.AppendFrame(3, "diff")
+	if got := len(s.Segments()[0].Frames); got != 2 {
+		t.Fatalf("frames = %d, want 2 (duplicate dropped)", got)
+	}
+	for i := 0; i < frameCap+10; i++ {
+		s.AppendFrame(int64(i), fmt.Sprintf("f%d", i))
+	}
+	if got := len(s.Segments()[0].Frames); got != frameCap {
+		t.Fatalf("frames = %d, want the cap %d", got, frameCap)
 	}
 }

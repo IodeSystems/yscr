@@ -44,7 +44,7 @@ type Segment struct {
 
 // Frame is one keyframe capture of a frames segment.
 type Frame struct {
-	At   int64 // ns
+	At   int64  // ns
 	Text string // full rendered frame
 }
 
@@ -90,17 +90,26 @@ func (s *Session) AppendLine(line string) {
 	}
 }
 
-// AppendFrame captures a keyframe into the open segment (frames segments only;
-// at most 64 kept).
+// AppendFrame captures a keyframe into the open segment (frames segments only).
+// A frame identical to the last stored one is DROPPED — a keyframe should mean
+// "the screen changed", and a TUI that repaints in place (a spinner) would
+// otherwise fill the log with duplicates. At most frameCap frames per segment,
+// drop-oldest: frames are bounded by screen-count × time, and that is the half
+// of history that grows unboundedly in a long-lived daemon.
+const frameCap = 5000
+
 func (s *Session) AppendFrame(at int64, text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.open == nil || s.open.Kind != Frames {
 		return
 	}
+	if n := len(s.open.Frames); n > 0 && s.open.Frames[n-1].Text == text {
+		return // unchanged since the last keyframe — nothing to store
+	}
 	s.open.Frames = append(s.open.Frames, Frame{At: at, Text: text})
-	if len(s.open.Frames) > 64 {
-		s.open.Frames = s.open.Frames[len(s.open.Frames)-64:]
+	if len(s.open.Frames) > frameCap {
+		s.open.Frames = s.open.Frames[len(s.open.Frames)-frameCap:]
 	}
 }
 
@@ -148,10 +157,15 @@ type Query struct {
 	Grep       string
 	Context    int
 	Limit      int // cap total rendered lines (0 → 400)
+	// FrameFull changes what a FRAMES segment renders: the full text of each
+	// keyframe instead of its diff vs the previous. Head/tail then count
+	// frames, not lines; grep searches full frame text (which is also where
+	// STABLE on-screen text lives — diffs only ever carry what changed).
+	FrameFull bool
 }
 
 // renderSegment turns one segment into the lines a query sees.
-func renderSegment(seg Segment) []string {
+func renderSegment(seg Segment, frameFull bool) []string {
 	switch seg.Kind {
 	case Lines:
 		return seg.Lines
@@ -159,6 +173,10 @@ func renderSegment(seg Segment) []string {
 		var out []string
 		for i := range seg.Frames {
 			out = append(out, fmt.Sprintf("── frame %d @ %s ──", i+1, time.Unix(0, seg.Frames[i].At).Format("15:04:05")))
+			if frameFull {
+				out = append(out, strings.Split(strings.TrimRight(seg.Frames[i].Text, "\n"), "\n")...)
+				continue
+			}
 			if d := seg.diff(i); d != "" {
 				out = append(out, strings.Split(d, "\n")...)
 			} else {
@@ -167,6 +185,15 @@ func renderSegment(seg Segment) []string {
 		}
 		return out
 	}
+}
+
+// frameCount is how many frames the chosen segments hold.
+func frameCount(segs []Segment) int {
+	n := 0
+	for _, seg := range segs {
+		n += len(seg.Frames)
+	}
+	return n
 }
 
 // QueryHistory serves the query against the session.
@@ -188,9 +215,25 @@ func (s *Session) QueryHistory(q Query) string {
 		}
 		sel = append(sel, seg)
 	}
+	if q.FrameFull {
+		if q.Tail > 0 && q.Head == 0 {
+			sel = tailFrames(sel, q.Tail)
+		} else if q.Head > 0 {
+			sel = headFrames(sel, q.Head)
+		}
+		var lines []string
+		for _, seg := range sel {
+			lines = append(lines, renderSegment(seg, true)...)
+		}
+		if q.Grep != "" {
+			lines = grepLines(lines, q.Grep, q.Context)
+		}
+		return capJoin(lines, q.Limit)
+	}
+
 	var lines []string
 	for _, seg := range sel {
-		r := renderSegment(seg)
+		r := renderSegment(seg, false)
 		lines = append(lines, r...)
 	}
 	switch {
@@ -242,6 +285,47 @@ func DiffFrames(a, b string) string {
 
 // grepLines returns matches with context; overlapping contexts merge, and
 // separate runs are joined by ⋮.
+// tailFrames keeps the LAST n frames across segments (drop-oldest): whole
+// trailing segments are kept, and the segment that crosses the boundary is
+// trimmed to its newest frames.
+func tailFrames(segs []Segment, n int) []Segment {
+	if n <= 0 {
+		return nil
+	}
+	out := make([]Segment, 0, len(segs))
+	for i := len(segs) - 1; i >= 0 && n > 0; i-- {
+		seg := segs[i]
+		if len(seg.Frames) <= n {
+			n -= len(seg.Frames)
+			out = append([]Segment{seg}, out...)
+			continue
+		}
+		seg.Frames = seg.Frames[len(seg.Frames)-n:]
+		n = 0
+		out = append([]Segment{seg}, out...)
+	}
+	return out
+}
+
+// headFrames keeps the first n frames across segments.
+func headFrames(segs []Segment, n int) []Segment {
+	out := make([]Segment, 0, len(segs))
+	for _, seg := range segs {
+		if n <= 0 {
+			break
+		}
+		if len(seg.Frames) <= n {
+			n -= len(seg.Frames)
+			out = append(out, seg)
+			continue
+		}
+		seg.Frames = seg.Frames[:n]
+		n = 0
+		out = append(out, seg)
+	}
+	return out
+}
+
 func grepLines(lines []string, pat string, ctx int) []string {
 	pat = strings.ToLower(pat)
 	mark := make([]bool, len(lines))

@@ -2,9 +2,9 @@ package tmux
 
 import (
 	"context"
-	"sync"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,7 +54,12 @@ const tree = "%1\twork\t0\t0\t111\tsh\t/dev/pts/1\t0\t1\n" +
 	"%2\twork\t1\t0\t222\tclaude\t/dev/pts/2\t1\t0\n" // alt-screen pane
 
 func newTestActivity(f *fakeTmux) *Activity {
-	a := New(Config{KeyframeInterval: 5 * time.Millisecond})
+	// SettleWindow 0 = no debounce: tests assert on stored frames directly. The
+	// settle behavior itself is covered by TestStream_FramesSettleCoalesces.
+	a := New(Config{KeyframeInterval: 5 * time.Millisecond, SettleWindow: -1})
+	if a.settleWindow != 0 {
+		panic("SettleWindow -1 must disable the debounce")
+	}
 	a.linePoll = 5 * time.Millisecond
 	fake := f
 	if fake.exec != nil {
@@ -237,7 +242,7 @@ func TestStream_LinesEmitsNewOnly(t *testing.T) {
 		}
 	}()
 	var got []string
-		for len(got) < 2 {
+	for len(got) < 2 {
 		select {
 		case ev := <-ch:
 			got = append(got, ev.Content)
@@ -286,10 +291,18 @@ func TestStream_FramesEmitsDiffs(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for first frame diff (captures=%v)", fake.captures)
 	}
-	// The pane's session was fed too.
-	s := a.SessionFor(context.Background(), mustPanic(t, a))
-	if len(s.Segments()[0].Frames) < 2 {
-		t.Errorf("session not fed by stream: %+v", s.Segments())
+	// The pane's session was fed too. Give the commit tick (the first UNCHANGED
+	// capture after the mutation) time to land before asserting.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		s := a.SessionFor(context.Background(), mustPanic(t, a))
+		if len(s.Segments()[0].Frames) >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session not fed by stream: %+v", s.Segments())
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -330,4 +343,82 @@ func mustPanic(t *testing.T, a *Activity) Pane {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestStream_FramesSettleCoalesces — rapid churn coalesces into ONE stored
+// keyframe (the settled end state), while the live feed still gets every diff.
+func TestStream_FramesSettleCoalesces(t *testing.T) {
+	fake := &fakeTmux{listPanes: tree, captures: map[string]string{"work:1.0": "base"}}
+	var mu sync.Mutex
+	a := New(Config{KeyframeInterval: 5 * time.Millisecond, SettleWindow: 30 * time.Millisecond})
+	a.linePoll = 5 * time.Millisecond
+	a.exec = func(_ context.Context, _ string, args ...string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return fakeTmuxExec(fake, args...)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := a.Stream(ctx, "%2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Three rapid changes 8ms apart — each inside the previous one's settle
+	// window — then quiet. The feed must see all three diffs; history must end
+	// with exactly ONE new frame (the settled "c" state).
+	go func() {
+		for i, v := range []string{"a", "b", "c"} {
+			time.Sleep(8 * time.Millisecond)
+			mu.Lock()
+			fake.captures["work:1.0"] = v
+			mu.Unlock()
+			if i == 2 {
+				// let it settle, then stop
+				time.Sleep(60 * time.Millisecond)
+			}
+		}
+	}()
+	var diffs int
+	deadline := time.After(3 * time.Second)
+	for diffs < 3 {
+		select {
+		case e, ok := <-ch:
+			if !ok {
+				t.Fatalf("stream closed after %d diffs", diffs)
+			}
+			diffs++
+			_ = e
+		case <-deadline:
+			t.Fatalf("timed out: got %d/3 diffs (settle must not debounce the FEED)", diffs)
+		}
+	}
+	// Let the settle commit land (one quiet tick after the last change), then
+	// stop. cancel() alone would leave the pending frame uncommitted — a stream
+	// ending mid-burst stores what it has already settled, by design.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	s := a.SessionFor(context.Background(), pane2(t, a))
+	frames := s.Segments()[0].Frames
+	// seed frame + exactly one coalesced frame for the whole burst
+	if len(frames) != 2 {
+		t.Fatalf("stored frames = %d, want 2 (seed + 1 coalesced): %+v", len(frames), frames)
+	}
+	if frames[1].Text != "c" {
+		t.Errorf("coalesced frame = %q, want the settled end state %q", frames[1].Text, "c")
+	}
+}
+
+func pane2(t *testing.T, a *Activity) Pane {
+	t.Helper()
+	ps, err := a.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ps {
+		if p.ID == "%2" {
+			return p
+		}
+	}
+	t.Fatal("no pane %2")
+	return Pane{}
 }

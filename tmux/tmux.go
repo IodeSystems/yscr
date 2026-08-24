@@ -30,21 +30,28 @@ const SourceID = "tmux"
 
 // Activity drives tmux and yields terminal sessions.
 type Activity struct {
-	linePoll           time.Duration // LINES stream tick (default 250ms)
+	linePoll         time.Duration // LINES stream tick (default 250ms)
 	bin              string
 	exec             func(ctx context.Context, name string, args ...string) (string, error)
 	now              func() int64
 	keyframeInterval time.Duration // FRAMES capture cadence while streaming
+	settleWindow     time.Duration // debounce: commit a frame only after this much quiet (0 = off)
 	sessions         map[string]*terminal.Session
-	wm               map[string]int    // per-pane line watermark for the feed
-	streaming        map[string]bool   // panes with an active Stream loop
+	wm               map[string]int  // per-pane line watermark for the feed
+	streaming        map[string]bool // panes with an active Stream loop
 	mu               sync.Mutex
 }
 
 // Config tunes the activity. Empty = defaults.
 type Config struct {
 	Bin              string        // tmux binary (default "tmux")
-	KeyframeInterval time.Duration // default 5s
+	KeyframeInterval time.Duration // default 5s — capture cadence while streaming
+	// SettleWindow is the debounce: after a change, a frame is only COMMITTED to
+	// history once the screen has been quiet this long. Rapid churn (a spinner
+	// repainting every tick) coalesces into one keyframe per burst — the settled
+	// end state — instead of one per repaint. 0 disables debouncing (commit
+	// every changed frame). Default: KeyframeInterval.
+	SettleWindow time.Duration
 }
 
 func New(cfg Config) *Activity {
@@ -56,12 +63,19 @@ func New(cfg Config) *Activity {
 	if ki <= 0 {
 		ki = 5 * time.Second
 	}
+	sw := cfg.SettleWindow
+	if sw < 0 {
+		sw = 0 // explicit disable
+	} else if sw == 0 {
+		sw = ki // default: one full cadence of quiet
+	}
 	return &Activity{
 		linePoll:         250 * time.Millisecond,
 		bin:              bin,
 		exec:             realExec,
 		now:              func() int64 { return time.Now().UnixNano() },
 		keyframeInterval: ki,
+		settleWindow:     sw,
 		sessions:         map[string]*terminal.Session{},
 		wm:               map[string]int{},
 		streaming:        map[string]bool{},
@@ -102,8 +116,8 @@ func (a *Activity) Scan(ctx context.Context) ([]Pane, error) {
 		}
 		p := Pane{
 			ID: f[0], Session: f[1], Window: atoi(f[2]), PaneIdx: atoi(f[3]),
-			Target:  f[1] + ":" + f[2] + "." + f[3],
-			Pid:     atoi(f[4]), Program: f[5], TTY: f[6], Alt: f[7] == "1", Active: f[8] == "1",
+			Target: f[1] + ":" + f[2] + "." + f[3],
+			Pid:    atoi(f[4]), Program: f[5], TTY: f[6], Alt: f[7] == "1", Active: f[8] == "1",
 		}
 		p.Cwd = a.cwdOf(p.Pid)
 		panes = append(panes, p)
@@ -382,12 +396,25 @@ func (a *Activity) streamLines(ctx context.Context, p Pane, s *terminal.Session,
 }
 
 // streamFrames captures on the throttle, feeds the session, emits diffs.
+// streamFrames captures on the throttle and commits a keyframe only after the
+// screen has SETTLED (been unchanged for SettleWindow). Rapid churn — a
+// spinner repainting every tick, tokens landing one at a time — coalesces into
+// ONE frame per burst: the settled end state. The live EVENT feed is unaffected
+// by the debounce: every changed capture still emits its diff immediately, so a
+// narrator hears about activity in real time; the debounce only shapes what
+// gets STORED as history (AppendFrame), where one keyframe per meaningful state
+// is worth more than one per repaint.
 func (a *Activity) streamFrames(ctx context.Context, p Pane, s *terminal.Session, emit func(string) bool) {
 	// Baseline: capture NOW so the first emitted event is a real change, not a
 	// replay of whatever was on screen when streaming started.
 	prev := a.viewport(ctx, p)
 	ticker := time.NewTicker(a.keyframeInterval)
 	defer ticker.Stop()
+	var (
+		pending string // last changed capture, awaiting settle
+		lastChg int64  // when the screen last changed (ns)
+		hadChng bool
+	)
 	for {
 		select {
 		case <-ctx.Done():
@@ -398,13 +425,29 @@ func (a *Activity) streamFrames(ctx context.Context, p Pane, s *terminal.Session
 				a.Drop(p.ID)
 				return
 			}
-			s.AppendFrame(a.now(), frame)
-			if d := terminal.DiffFrames(prev, frame); d != "" {
-				if !emit(d) {
-					return
+			now := a.now()
+			if frame != prev {
+				// Changed: emit the diff NOW (the live feed is not debounced),
+				// and hold the frame for storage until it settles.
+				if d := terminal.DiffFrames(prev, frame); d != "" {
+					if !emit(d) {
+						return
+					}
 				}
+				pending = frame
+				lastChg = now
+				hadChng = true
+				prev = frame
+				continue
 			}
-			prev = frame
+			// Unchanged since last capture: commit the pending frame once it has
+			// been quiet for the settle window. AppendFrame also drops no-ops,
+			// so a pending frame equal to the last stored one costs nothing.
+			if hadChng && (a.settleWindow <= 0 || now-lastChg >= int64(a.settleWindow)) {
+				s.AppendFrame(lastChg, pending)
+				pending = ""
+				hadChng = false
+			}
 		}
 	}
 }
