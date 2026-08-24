@@ -18,6 +18,7 @@ import (
 	"github.com/iodesystems/agentkit/agent"
 	"github.com/iodesystems/agentkit/llm"
 
+	"github.com/iodesystems/yscr/decisions"
 	"github.com/iodesystems/yscr/questions"
 	"github.com/iodesystems/yscr/scratchpad"
 	"github.com/iodesystems/yscr/source"
@@ -48,6 +49,10 @@ type Concierge struct {
 	// Open-questions queue (work-around-ambiguity; nil without a durable store).
 	questions       questions.QuestionsStore
 	questionToolsOn bool
+
+	// Decision-log recall (nil until WithDecisions; no durable store → off).
+	decisions       decisions.Store
+	decisionToolsOn bool
 
 	// Run & watch (run_command): the shell-spawning source + a wait-for-idle
 	// poller. Nil until WithRun is called (no terminal panes enabled).
@@ -134,6 +139,9 @@ func (c *Concierge) session(sessionID string) *agent.Session {
 	}
 	if c.questionToolsOn {
 		tools = append(tools, questionToolDefs...)
+	}
+	if c.decisionToolsOn {
+		tools = append(tools, decisionToolDefs...)
 	}
 	if c.runSpawner != nil {
 		tools = append(tools, runToolDef)
@@ -224,6 +232,10 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 
 	if isQuestionTool(tc.Function.Name) {
 		return c.questionDispatch(ctx, tc.Function.Name, args), nil
+	}
+
+	if isDecisionTool(tc.Function.Name) {
+		return c.decisionDispatch(ctx, tc.Function.Name, args), nil
 	}
 
 	if isReportTool(tc.Function.Name) {

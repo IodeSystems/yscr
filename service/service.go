@@ -128,6 +128,7 @@ func New(cfg *config.Config) (*Server, error) {
 		s.conc.WithTasks(pg)
 		s.conc.WithQuestions(&pgQuestions{pg})
 		s.conc.SetDecisionLog(s.logAnswers)
+		s.conc.WithDecisions(&pgDecisions{pg})
 	}
 	// Goal plans: plan_goal batch-enqueues a decomposed goal into the cue.
 	if pg != nil {

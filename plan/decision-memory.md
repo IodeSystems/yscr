@@ -49,7 +49,9 @@ the inference ("answered X because you chose Y on <date>, session Z").
 - ✅ **PWA + HTTP** — `GET /api/decisions`; "Decisions I remember" section
   (open decisions, newest first, capped 12), refreshed after tap-to-answer.
 
-**Remaining (optional):** LLM-judged near-match auto-resolve as a distinct
-proposed-then-confirmed path (today the persona does this conversationally —
-no separate store entry); conversational recall tool ("why did you pick EU?" →
-`list_decisions` tool).
+- ✅ **Conversational recall** — `list_decisions` concierge tool (WithDecisions;
+  read-only, open decisions newest-first capped 25, optional substring filter)
+  so "why did you pick EU?" is answered from the log with provenance.
+- **Remaining (optional):** LLM-judged near-match auto-resolve as a distinct
+  proposed-then-confirmed path (today the persona does this conversationally —
+  no separate store entry).
