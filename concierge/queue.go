@@ -30,9 +30,9 @@ import (
 const turnTimeout = 1 * time.Hour
 
 type convReq struct {
-	msg   string
+	msg    string
 	medium string // "" | "text" | "speech" — the channel this turn is heard on
-	done  chan convRes
+	done   chan convRes
 }
 
 type convRes struct {

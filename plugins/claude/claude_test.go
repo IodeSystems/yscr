@@ -9,11 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/iodesystems/yscr/plugins/pane"
 	"github.com/iodesystems/yscr/source"
 )
 
-// fakeTmux implements pane.Tmux. `live` maps a session id to its target when the
+// fakeTmux implements Tmux. `live` maps a session id to its target when the
 // session is live in a pane; Launch/SendKeys are recorded for assertions.
 type fakeTmux struct {
 	calls   [][]string
@@ -21,7 +20,7 @@ type fakeTmux struct {
 	capture string
 }
 
-func (f *fakeTmux) Target(_ context.Context, s pane.Session) (string, bool) {
+func (f *fakeTmux) Target(_ context.Context, s Session) (string, bool) {
 	if t, ok := f.live[s.ID]; ok {
 		return t, true
 	}
@@ -44,7 +43,7 @@ func (f *fakeTmux) SendKeys(_ context.Context, target string, keys ...string) er
 	return nil
 }
 
-func (f *fakeTmux) Launch(_ context.Context, s pane.Session, dir string, argv []string) (string, error) {
+func (f *fakeTmux) Launch(_ context.Context, s Session, dir string, argv []string) (string, error) {
 	name := "yscr-cc-" + s.ID
 	f.calls = append(f.calls, append([]string{"new-session", "-c", dir, "-s", name}, argv...))
 	return name, nil
@@ -109,13 +108,13 @@ func newAdapter(home string) *Adapter {
 }
 
 // sessA is the discovered session for sess-A (cwd + pid from the index).
-func sessA() pane.Session {
-	return pane.Session{Source: SourceID, ID: "sess-A", Cwd: "/repo/alpha", Pid: 1001}
+func sessA() Session {
+	return Session{Source: SourceID, ID: "sess-A", Cwd: "/repo/alpha", Pid: 1001}
 }
 
 func TestDiscover_FromIndex(t *testing.T) {
 	a := newAdapter(fakeHome(t))
-	got := map[string]pane.Session{}
+	got := map[string]Session{}
 	for _, s := range a.Discover(context.Background()) {
 		got[s.ID] = s
 	}
@@ -252,7 +251,7 @@ func TestHistory_LimitKeepsMostRecent(t *testing.T) {
 
 func TestHistory_UnknownSession(t *testing.T) {
 	a := newAdapter(fakeHome(t))
-	if _, err := a.History(context.Background(), pane.Session{ID: "nope"}, 0, &fakeTmux{}); err == nil {
+	if _, err := a.History(context.Background(), Session{ID: "nope"}, 0, &fakeTmux{}); err == nil {
 		t.Fatal("want error for unknown session")
 	}
 }
@@ -316,7 +315,7 @@ func TestStream_TailsAppendedTurns(t *testing.T) {
 // A session with no transcript yields an immediately-closed channel.
 func TestStream_NoTranscriptCloses(t *testing.T) {
 	a := newAdapter(fakeHome(t))
-	ch, err := a.Stream(context.Background(), pane.Session{Source: SourceID, ID: "sess-A", Cwd: "/repo/none"}, &fakeTmux{})
+	ch, err := a.Stream(context.Background(), Session{Source: SourceID, ID: "sess-A", Cwd: "/repo/none"}, &fakeTmux{})
 	if err != nil {
 		t.Fatal(err)
 	}

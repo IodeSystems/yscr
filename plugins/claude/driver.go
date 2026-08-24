@@ -1,4 +1,4 @@
-package pane
+package claude
 
 import (
 	"context"
@@ -198,35 +198,6 @@ func (d *tmuxDriver) paneByTTY(ctx context.Context) map[string]string {
 		}
 	}
 	return m
-}
-
-// scan lists every live tmux pane with the fields needed to classify + join it.
-// The source routes each by Program to an adapter (LivePane defined in adapter.go).
-func (d *tmuxDriver) scan(ctx context.Context) []LivePane {
-	out, err := d.run(ctx, "list-panes", "-a", "-F",
-		"#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_tty}\t#{alternate_on}")
-	if err != nil {
-		return nil
-	}
-	var panes []LivePane
-	for _, ln := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		f := strings.SplitN(ln, "\t", 5)
-		if len(f) != 5 {
-			continue
-		}
-		panes = append(panes, LivePane{Target: f[0], Pid: atoi(f[1]), Program: f[2], TTY: f[3], Alt: f[4] == "1"})
-	}
-	return panes
-}
-
-// defaultTTYOf reads a live process's controlling tty from /proc (Linux). ""
-// if the pid is gone or has no pts.
-func defaultTTYOf(pid int) string {
-	l, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/0", pid))
-	if err != nil || !strings.HasPrefix(l, "/dev/pts/") {
-		return ""
-	}
-	return l
 }
 
 func atoi(s string) int {

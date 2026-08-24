@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/iodesystems/yscr/plugins/pane/claude"
+	"github.com/iodesystems/yscr/plugins/claude"
 )
 
 // runHookQuestion is the `yscr hook-question` PreToolUse hook body: it reads the

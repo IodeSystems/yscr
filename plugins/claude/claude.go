@@ -28,7 +28,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/iodesystems/yscr/plugins/pane"
 	"github.com/iodesystems/yscr/source"
 )
 
@@ -38,17 +37,14 @@ const SourceID = "claude-code"
 // program is the tmux pane_current_command for a Claude CLI pane.
 const program = "claude"
 
-var (
-	_ pane.Adapter  = (*Adapter)(nil)
-	_ pane.Streamer = (*Adapter)(nil)
-)
+var ()
 
 // streamPollDefault is how often Stream checks the transcript for appended
 // records. Claude turns are slow, so 1s is plenty; the narrator buffers anyway.
 const streamPollDefault = time.Second
 
-// Adapter implements pane.Adapter for Claude Code. It holds no tmux state — the
-// source lends a pane.Tmux for pane I/O; only sessions we launch before they
+// Adapter implements Adapter for Claude Code. It holds no tmux state — the
+// source lends a Tmux for pane I/O; only sessions we launch before they
 // reach the index are tracked here (sid → cwd), mirroring the CLI's write delay.
 type Adapter struct {
 	home       string
@@ -195,7 +191,7 @@ func (a *Adapter) readIndex() map[string]sessionMeta {
 
 // Discover enumerates claude sessions from the index, plus any we launched that
 // haven't reached the index yet (tracked). Each carries Pid for the pid↔pane join.
-func (a *Adapter) Discover(_ context.Context) []pane.Session {
+func (a *Adapter) Discover(_ context.Context) []Session {
 	metas := a.readIndex()
 	a.mu.Lock()
 	for sid, cwd := range a.tracked {
@@ -204,9 +200,9 @@ func (a *Adapter) Discover(_ context.Context) []pane.Session {
 		}
 	}
 	a.mu.Unlock()
-	out := make([]pane.Session, 0, len(metas))
+	out := make([]Session, 0, len(metas))
 	for _, m := range metas {
-		out = append(out, pane.Session{
+		out = append(out, Session{
 			Source: SourceID, ID: m.SessionID, Cwd: m.Cwd, Name: title(m.Cwd),
 			Pid: m.Pid, UpdatedAt: m.UpdatedAt,
 		})
@@ -226,7 +222,7 @@ func (a *Adapter) transcriptPath(cwd, sid string) string {
 
 // cwdOf resolves a session's working dir: the session's own Cwd, else our
 // tracked map, else the index.
-func (a *Adapter) cwdOf(s pane.Session) string {
+func (a *Adapter) cwdOf(s Session) string {
 	if s.Cwd != "" {
 		return s.Cwd
 	}
@@ -247,7 +243,7 @@ func (a *Adapter) track(sid, cwd string) {
 
 // ── State ───────────────────────────────────────────────────────────
 
-func (a *Adapter) State(ctx context.Context, s pane.Session, t pane.Tmux) (source.State, error) {
+func (a *Adapter) State(ctx context.Context, s Session, t Tmux) (source.State, error) {
 	sid := s.ID
 	cwd := a.cwdOf(s)
 	ref := source.SessionRef{Source: SourceID, ID: sid, Title: title(cwd), Dir: cwd}
@@ -308,7 +304,7 @@ const activeWindowNS = int64(3 * time.Minute)
 
 // History projects the JSONL transcript to compact width-invariant turn lines.
 // The Tmux handle is unused — claude's history is the file, not the pane.
-func (a *Adapter) History(_ context.Context, s pane.Session, n int, _ pane.Tmux) (string, error) {
+func (a *Adapter) History(_ context.Context, s Session, n int, _ Tmux) (string, error) {
 	if n <= 0 {
 		n = 12
 	}
@@ -331,13 +327,13 @@ func (a *Adapter) History(_ context.Context, s pane.Session, n int, _ pane.Tmux)
 	return strings.Join(turns, "\n"), nil
 }
 
-// Stream implements pane.Streamer: it tails the JSONL transcript from its
+// Stream implements Streamer: it tails the JSONL transcript from its
 // current end, emitting one event per newly-appended turn (projected the same
 // way History projects — assistant/user text + tool-call summaries, thinking and
 // tool_result bodies dropped). This lets a claude session feed the narration
 // path just like a terminal pane. The Tmux handle is unused — the transcript,
 // not the pane, is the source. Runs until ctx is cancelled.
-func (a *Adapter) Stream(ctx context.Context, s pane.Session, _ pane.Tmux) (<-chan source.Event, error) {
+func (a *Adapter) Stream(ctx context.Context, s Session, _ Tmux) (<-chan source.Event, error) {
 	ref := source.SessionRef{Source: SourceID, ID: s.ID, Title: title(a.cwdOf(s)), Dir: a.cwdOf(s)}
 	cwd := a.cwdOf(s)
 	if cwd == "" {
@@ -568,7 +564,7 @@ func lastLines(paneText string, n int) string {
 
 // ── Post / Spawn ────────────────────────────────────────────────────
 
-func (a *Adapter) Post(ctx context.Context, s pane.Session, message string, t pane.Tmux) error {
+func (a *Adapter) Post(ctx context.Context, s Session, message string, t Tmux) error {
 	// Already live (our window, or the user's own pane)? Drive it in place.
 	// Otherwise resume the dormant session in its cwd.
 	tgt, live := t.Target(ctx, s)
@@ -588,16 +584,16 @@ func (a *Adapter) Post(ctx context.Context, s pane.Session, message string, t pa
 }
 
 // Spawn starts a NEW Claude session in spec.Dir (default: the user's home).
-func (a *Adapter) Spawn(ctx context.Context, spec source.SpawnSpec, t pane.Tmux) (pane.Session, error) {
+func (a *Adapter) Spawn(ctx context.Context, spec source.SpawnSpec, t Tmux) (Session, error) {
 	sid := a.newID()
 	dir := spec.Dir
 	if dir == "" {
 		dir, _ = os.UserHomeDir()
 	}
-	s := pane.Session{Source: SourceID, ID: sid, Cwd: dir, Name: firstNonEmpty(spec.Title, title(dir))}
+	s := Session{Source: SourceID, ID: sid, Cwd: dir, Name: firstNonEmpty(spec.Title, title(dir))}
 	tgt, err := t.Launch(ctx, s, dir, append(sliceOf(a.command), "--session-id", sid))
 	if err != nil {
-		return pane.Session{}, err
+		return Session{}, err
 	}
 	a.track(sid, dir)
 	if spec.Prompt != "" {
@@ -609,7 +605,7 @@ func (a *Adapter) Spawn(ctx context.Context, spec source.SpawnSpec, t pane.Tmux)
 // send delivers a message + submit to a live pane. NOTE: send-keys -l passes an
 // embedded newline through as Enter (a multi-line message submits early) — the
 // paste-buffer fix is a separate slice.
-func send(ctx context.Context, t pane.Tmux, target, message string) error {
+func send(ctx context.Context, t Tmux, target, message string) error {
 	if err := t.SendKeys(ctx, target, "-l", message); err != nil {
 		return err
 	}
@@ -625,7 +621,7 @@ const answerKeyDelay = 300 * time.Millisecond
 // Act answers a pending question by driving the live TUI. It READS the question
 // structured (hook payload; pane parse as fallback) to map each chosen option to
 // its on-screen digit, then WRITES the selection as keystrokes.
-func (a *Adapter) Act(ctx context.Context, s pane.Session, action source.Action, t pane.Tmux) (string, error) {
+func (a *Adapter) Act(ctx context.Context, s Session, action source.Action, t Tmux) (string, error) {
 	if action.Name != "answer_questionnaire" {
 		return "", fmt.Errorf("claude-code: unsupported action %q", action.Name)
 	}

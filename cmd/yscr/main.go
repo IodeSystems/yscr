@@ -24,7 +24,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/iodesystems/yscr/config"
-	"github.com/iodesystems/yscr/plugins/pane/claude"
+	"github.com/iodesystems/yscr/plugins/claude"
 	"github.com/iodesystems/yscr/service"
 )
 

@@ -21,7 +21,6 @@ type Config struct {
 	// LLM is the concierge's own endpoint (corrallm / OpenRouter).
 	LLM LLMConfig `json:"llm"`
 
-
 	// ClaudeCode enables the tmux Claude Code source.
 	ClaudeCode ClaudeCodeConfig `json:"claude_code"`
 
@@ -61,10 +60,6 @@ type LLMConfig struct {
 type ClaudeCodeConfig struct {
 	Enabled bool     `json:"enabled"`
 	Command []string `json:"command"` // default ["claude"]
-	// TerminalPanes also registers the generic terminal adapter — it adopts every
-	// non-claude, normal-screen (alt=0) tmux pane (shells, builds, log tails) into
-	// the fleet. Off by default: it can flood the fleet with every open shell.
-	TerminalPanes bool `json:"terminal_panes"`
 }
 
 type AudioConfig struct {
@@ -111,10 +106,10 @@ type CueConfig struct {
 	DryRun      *bool `json:"dry_run"`              // log intended dispatches, don't act (default true)
 	GenInterval int   `json:"gen_interval_seconds"` // generator tick cadence (default 120)
 
-	PerSessionCap int `json:"per_session_cap"`         // cue.Caps.PerSession (default 1)
-	GlobalCap     int `json:"global_cap"`              // cue.Caps.Global (0 = unlimited)
-	MaxSpawns     int `json:"max_spawns"`              // cue.Caps.MaxSpawns (0 = unlimited)
-	MaxPerHour    int `json:"max_per_hour"`            // hard rate cap on live dispatches (0 = unlimited)
+	PerSessionCap int `json:"per_session_cap"`        // cue.Caps.PerSession (default 1)
+	GlobalCap     int `json:"global_cap"`             // cue.Caps.Global (0 = unlimited)
+	MaxSpawns     int `json:"max_spawns"`             // cue.Caps.MaxSpawns (0 = unlimited)
+	MaxPerHour    int `json:"max_per_hour"`           // hard rate cap on live dispatches (0 = unlimited)
 	CompletionTTL int `json:"completion_ttl_seconds"` // reclaim an in-flight task after this long (default 1800)
 
 	Goals []string `json:"goals"` // standing goals the generator plans against (phase 4)

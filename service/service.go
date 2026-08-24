@@ -15,9 +15,7 @@ import (
 
 	"github.com/iodesystems/yscr/concierge"
 	"github.com/iodesystems/yscr/config"
-	"github.com/iodesystems/yscr/plugins/pane"
-	"github.com/iodesystems/yscr/plugins/pane/claude"
-	"github.com/iodesystems/yscr/plugins/pane/terminal"
+	"github.com/iodesystems/yscr/plugins/claude"
 	"github.com/iodesystems/yscr/questions"
 	"github.com/iodesystems/yscr/scratchpad"
 	"github.com/iodesystems/yscr/source"
@@ -64,11 +62,11 @@ func New(cfg *config.Config) (*Server, error) {
 
 	var sources []source.Source
 	if cfg.ClaudeCode.Enabled {
-		adapters := []pane.Adapter{claude.New(claude.Config{Command: cfg.ClaudeCode.Command})}
-		if cfg.ClaudeCode.TerminalPanes {
-			adapters = append(adapters, terminal.New(terminal.Config{}))
-		}
-		sources = append(sources, pane.NewSet(pane.Config{}, adapters...)...)
+		// The claude adapter stands alone now: the generic pane source it used to
+		// ride on is gone (its replacement, the tmux Activity package, is not yet
+		// wired in as a source — see plan). Terminal panes are visible through
+		// that package's Scan/Stream, not as fleet sessions, until then.
+		sources = append(sources, claude.NewSource(claude.Config{Command: cfg.ClaudeCode.Command}))
 	}
 
 	ph, err := newPushHub(cfg, pg)
