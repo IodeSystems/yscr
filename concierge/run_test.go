@@ -71,3 +71,39 @@ func TestRunCommand_OffWithoutWithRun(t *testing.T) {
 		t.Errorf("out = %q", out)
 	}
 }
+
+func TestRunCommand_SummarizesLongOutput(t *testing.T) {
+	long := strings.Repeat("ok pkg\n", 300) // > 1200 chars
+	c := New(nil, store.NewMem(), &fakeSource{}).WithRun(&fakeSpawner{},
+		func(context.Context, source.SessionRef) (string, error) { return long, nil },
+		func(context.Context, string, string) (string, error) { return "all tests passed", nil })
+	out := c.runCommand(context.Background(), map[string]any{"command": "go test ./..."})
+	if !strings.Contains(out, "summary: all tests passed") || !strings.Contains(out, "ok pkg") {
+		t.Fatalf("expected summary + tail, got: %.200s", out)
+	}
+}
+
+func TestRunCommand_ShortOutputSkipsSummarizer(t *testing.T) {
+	called := false
+	c := New(nil, store.NewMem(), &fakeSource{}).WithRun(&fakeSpawner{},
+		func(context.Context, source.SessionRef) (string, error) { return "hi\n", nil },
+		func(context.Context, string, string) (string, error) { called = true; return "x", nil })
+	out := c.runCommand(context.Background(), map[string]any{"command": "echo hi"})
+	if called {
+		t.Fatal("summarizer should not run for short output")
+	}
+	if !strings.Contains(out, "hi") {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestRunCommand_SummarizerFailureFallsBack(t *testing.T) {
+	long := strings.Repeat("line\n", 300)
+	c := New(nil, store.NewMem(), &fakeSource{}).WithRun(&fakeSpawner{},
+		func(context.Context, source.SessionRef) (string, error) { return long, nil },
+		func(context.Context, string, string) (string, error) { return "", context.DeadlineExceeded })
+	out := c.runCommand(context.Background(), map[string]any{"command": "x"})
+	if !strings.Contains(out, "output tail:") || !strings.Contains(out, "line") {
+		t.Fatalf("expected raw-tail fallback, got: %.200s", out)
+	}
+}

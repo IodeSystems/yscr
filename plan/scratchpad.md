@@ -42,9 +42,14 @@ carries in-context.
   waits for idle-at-prompt (bounded) and reports the output tail; background
   returns the pane id. Live-verified: launched shell windows run commands and
   their scrollback carries the output.
-- ◻ **next:** LLM-distilled completion summary for long outputs (the raw tail
-  is enough for now); PWA "running commands" view (open command tasks with a
-  Watch shortcut).
+- ✅ **LLM-distilled completion summary** — `run_command` foreground now takes
+  an optional summarizer (`WithRun(spawner, wait, summarize...)`); past ~1200
+  chars of output the LLM distills it into 1-3 sentences (what happened + the
+  facts that matter), raw tail kept underneath; short output or a summarizer
+  failure reports the raw tail as-is. `service.runSummarize` implements it over
+  the concierge's LLM runner (45s bound, best-effort).
+- ◻ **PWA "running commands" view** — open command tasks with a Watch shortcut
+  (the task list shows them; watching is one tap away in the detail sheet).
 
-**Scratchpad core COMPLETE** — todos, schedules, and run & watch all land.
-Remaining items are polish.
+**Scratchpad COMPLETE** — todos, schedules, run & watch, and completion
+summaries all land.

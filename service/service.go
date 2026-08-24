@@ -145,7 +145,7 @@ func New(cfg *config.Config) (*Server, error) {
 	// waits poll State until the shell is idle-at-prompt again.
 	for _, src := range sources {
 		if src.ID() == "terminal" {
-			s.conc.WithRun(src, s.waitShellIdle)
+			s.conc.WithRun(src, s.waitShellIdle, s.runSummarize)
 			break
 		}
 	}

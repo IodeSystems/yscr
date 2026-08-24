@@ -20,10 +20,15 @@ const runCommandTimeout = 3 * time.Minute
 
 // WithRun enables the run_command tool. `spawner` is the source that starts
 // shell windows (the terminal pane adapter's source); `wait` blocks until the
-// spawned session reports idle-at-prompt again, returning its final output tail.
-func (c *Concierge) WithRun(spawner source.Source, wait func(ctx context.Context, ref source.SessionRef) (string, error)) *Concierge {
+// spawned session reports idle-at-prompt again, returning its final output tail;
+// summarize (optional) distills a long tail into a short completion summary —
+// nil means the raw tail is reported as-is.
+func (c *Concierge) WithRun(spawner source.Source, wait func(ctx context.Context, ref source.SessionRef) (string, error), summarize ...func(ctx context.Context, command, output string) (string, error)) *Concierge {
 	c.runSpawner = spawner
 	c.runWait = wait
+	if len(summarize) > 0 {
+		c.runSummarize = summarize[0]
+	}
 	return c
 }
 
@@ -61,7 +66,7 @@ func (c *Concierge) runCommand(ctx context.Context, args map[string]any) string 
 		if err != nil {
 			return fmt.Sprintf("command %q did not return to a prompt in time (it may still be running — the user can watch pane %s): %v", cmd, s.ID, err)
 		}
-		return fmt.Sprintf("command finished. Output tail:\n%s", out)
+		return "command finished. " + c.finishReport(cctx, cmd, out)
 	}
 	return fmt.Sprintf("command started in background (pane %s). The user can watch it or ask for its output.", s.ID)
 }
@@ -71,4 +76,20 @@ func firstWord(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// finishReport renders a completed command's output: long tails get an
+// LLM-distilled completion summary (with the raw tail kept underneath); short
+// tails are reported as-is. A summarizer failure falls back to the raw tail —
+// it must never fail the report.
+func (c *Concierge) finishReport(ctx context.Context, cmd, out string) string {
+	if c.runSummarize != nil && len(out) > 1200 {
+		ctx2, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		sum, err := c.runSummarize(ctx2, cmd, out)
+		if err == nil && strings.TrimSpace(sum) != "" {
+			return fmt.Sprintf("summary: %s\n\nOutput tail:\n%s", sum, out)
+		}
+	}
+	return "output tail:\n" + out
 }

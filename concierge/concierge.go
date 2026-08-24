@@ -56,8 +56,9 @@ type Concierge struct {
 
 	// Run & watch (run_command): the shell-spawning source + a wait-for-idle
 	// poller. Nil until WithRun is called (no terminal panes enabled).
-	runSpawner source.Source
-	runWait    func(ctx context.Context, ref source.SessionRef) (string, error)
+	runSpawner   source.Source
+	runWait      func(ctx context.Context, ref source.SessionRef) (string, error)
+	runSummarize func(ctx context.Context, command, output string) (string, error)
 
 	// Goal plans (plan_goal): the durable cue store to batch-enqueue a
 	// decomposed goal into. Nil without Postgres → tool stays off.
