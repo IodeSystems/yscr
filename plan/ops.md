@@ -9,11 +9,10 @@
 2. ✅ **Durable session registries** — openai/claude-code forget their sessions
    across restart. The claude index (`~/.claude/sessions/*.json`) is on disk;
    wire List back from it on start so adoption self-heals after a reboot.
-3. **Optional auth** — LAN-only today, deferred; if the service ever leaves the
-   VPN zone, bearer-token like autowork3's client-token.
+3. ✅ **Optional auth** — bearer-token middleware, off by default.
 
 ## Status
-◐ in progress — #1 + #2 done; #3 (optional auth) not started.
+✅ done — all three requirements landed.
 
 ### ✅ Durable session registries
 - **openai plugin** (`plugins/openai`): `RestoreFromStore(ctx, st)` rebuilds the
@@ -37,6 +36,10 @@
   it running after logout if desired. The `.air.toml` tmux session stays for
   development hot-reload.
 
-### ◻ Optional auth
-- Bearer-token middleware (like autowork3's client-token) gated by a config
-  flag; off by default for LAN-only use.
+### ✅ Optional auth
+- `config.Auth.Token` (env `YSCR_AUTH_TOKEN` overrides). When set, every `/api/*`
+  route requires `Authorization: Bearer <token>` — constant-time compare,
+  `WWW-Authenticate` on 401. The PWA shell + static assets stay open (no state
+  behind them); the data routes are what's protected. Off by default for
+  LAN-only use. `service/auth.go` + tests (off / no-token / wrong-token /
+  good-token / shell-open).

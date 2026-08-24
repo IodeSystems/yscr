@@ -200,6 +200,12 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]any{"sent": s.Notify("YSCR", "Test notification — you're subscribed.")})
 	})
 	s.registerAudio(mux)
+	// Auth (off by default): when a token is configured, every /api/* route
+	// requires "Authorization: Bearer <token>". The PWA shell + static assets
+	// stay open (they carry no state); the data routes are what's protected.
+	if s.cfg.Auth.Token != "" {
+		return authMiddleware(s.cfg.Auth.Token, mux)
+	}
 	mux.Handle("/", http.FileServerFS(web.FS))
 	return mux
 }

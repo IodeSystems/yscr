@@ -49,6 +49,11 @@ type Config struct {
 	// explicitly turned on.
 	Ambient AmbientConfig `json:"ambient"`
 
+	// Auth, when Token is set, requires "Authorization: Bearer <token>" on every
+	// /api/* route (the PWA shell itself stays open). OFF by default — the
+	// service is LAN/VPN-only today; this is for the day it leaves that zone.
+	Auth AuthConfig `json:"auth"`
+
 	// path is where this config was loaded from (for saving generated keys).
 	path string `json:"-"`
 }
@@ -105,6 +110,10 @@ type AmbientConfig struct {
 
 	// MinIntervalSeconds bounds how often one session may speak (default 60).
 	MinIntervalSeconds int `json:"min_interval_seconds"`
+}
+
+type AuthConfig struct {
+	Token string `json:"token"` // bearer token; env YSCR_AUTH_TOKEN overrides. Empty = auth off.
 }
 
 // CueConfig tunes the outbound task scheduler. The caps map onto cue.Caps; the
@@ -169,6 +178,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.VAPID.Subject == "" {
 		c.VAPID.Subject = "mailto:yscr@localhost"
+	}
+	if v := os.Getenv("YSCR_AUTH_TOKEN"); v != "" {
+		c.Auth.Token = v
 	}
 	// Audio defaults to the LLM endpoint (corrallm serves both).
 	if c.Audio.BaseURL == "" {
