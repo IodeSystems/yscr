@@ -17,6 +17,9 @@
 - **PreToolUse hook** — structured question read (primary); `yscr install-hook`.
 - **Deploy** — hz dev proxy, valid TLS at https://ysr.iodesystems.com; `.air.toml` hot-reload in `yscr-air` tmux.
 - **oidio endpoint silence configurable** (`../services/oidio`) — rule1/2/3 yaml knobs.
+- **Ambient quiet hours + min-interval gate** — `ambient.quiet_start/end` (HH:MM, wraps midnight) + `min_interval_seconds` (default 60); a held advance stays recorded and speaks at the next qualifying tick.
+- **Durable openai session registry** — `RestoreFromStore` rebuilds in-memory metas from Postgres entry logs on start; sessions survive a restart (verified live).
+- **systemd unit (user scope)** — `~/.config/systemd/user/yscr.service`, enabled + running; reboot-persistence for the daemon.
 - **Scratchpad — todos + schedules** (`c7bd92a`) — scratchpad pkg (Task/Store, cron), Postgres store, concierge task tools, /api/tasks + PWA work list, scheduler tick (one-shots → cue; cron re-arm).
 - **Scratchpad — run & watch** (`79dbc86`) — terminal adapter Spawn (detached sh window) + run_command tool (foreground bounded wait-for-idle + output tail; background pane id).
 - **Diagrams & reports on request** — `reports/` SVG renderer (task dep graph / fleet map / work list), concierge `render_diagram` + `write_report` tools, reports persisted to ~/.yscr/reports/, PWA inline-SVG bubbles.
