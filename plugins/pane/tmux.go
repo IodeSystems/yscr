@@ -156,18 +156,16 @@ func (d *tmuxDriver) Launch(ctx context.Context, s Session, dir string, argv []s
 	return name, nil
 }
 
-// Target resolves how to drive a session: our own launched window → the user's
-// own pane hosting it (exact pid→tty→pane join) → not live (returns the window
-// name we'd use, so callers that only need a name have one).
+// Target resolves how to drive a session: the pane hosting its pid (exact
+// pid→tty→pane join — user panes and our launched windows alike, since a
+// launched window is just another tmux session whose panes carry the pid) →
+// not live (returns the window name we'd use, so callers that only need a name
+// have one).
 func (d *tmuxDriver) Target(ctx context.Context, s Session) (string, bool) {
-	own := d.windowName(s.ID)
-	if _, err := d.run(ctx, "has-session", "-t", own); err == nil {
-		return own, true
-	}
 	if tgt, ok := d.paneOf(ctx, s); ok {
 		return tgt, true
 	}
-	return own, false
+	return d.windowName(s.ID), false
 }
 
 // paneOf finds the tmux pane hosting a session by joining the session's pid to a

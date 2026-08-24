@@ -172,14 +172,12 @@ func TestSource_ObserveFallsBackToSummary(t *testing.T) {
 // ── tmux plumbing: pid↔tty↔pane join + scan ─────────────────────────
 
 func TestTmux_TargetJoinsOwnPane(t *testing.T) {
-	// has-session fails (not our window); the pid→tty→pane join finds the user's.
+	// The pid→tty→pane join finds the pane hosting the session — a user pane,
+	// or one of our launched windows (they're real tmux sessions too).
 	d := newTmux("tmux", "yscr-cc")
 	d.ttyOf = func(pid int) string { return fmt.Sprintf("/dev/pts/%d", pid) }
 	d.exec = func(_ context.Context, _ string, args ...string) (string, error) {
-		switch args[0] {
-		case "has-session":
-			return "", fmt.Errorf("no session")
-		case "list-panes":
+		if args[0] == "list-panes" {
 			return "/dev/pts/1001\twork:2.1\n/dev/pts/9\telse:0.0\n", nil
 		}
 		return "", nil
@@ -193,12 +191,7 @@ func TestTmux_TargetJoinsOwnPane(t *testing.T) {
 func TestTmux_TargetNotLiveWhenPidDead(t *testing.T) {
 	d := newTmux("tmux", "yscr-cc")
 	d.ttyOf = func(int) string { return "" } // dead
-	d.exec = func(_ context.Context, _ string, args ...string) (string, error) {
-		if args[0] == "has-session" {
-			return "", fmt.Errorf("no session")
-		}
-		return "", nil
-	}
+	d.exec = func(_ context.Context, _ string, args ...string) (string, error) { return "", nil }
 	if _, live := d.Target(context.Background(), Session{ID: "sess-A", Pid: 1001}); live {
 		t.Error("dead pid should not be live")
 	}

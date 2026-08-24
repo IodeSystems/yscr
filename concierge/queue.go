@@ -19,9 +19,15 @@ import (
 // turn's reply. Messages that arrive after a turn has already STARTED are handled
 // in the next turn — matching "interrupted before processing" semantics.
 
-// turnTimeout caps a single turn so a wedged LLM/tool call can't block a
-// session's queue forever. Generous: turns may fan out to source tools.
-const turnTimeout = 5 * time.Minute
+// turnTimeout caps ONE ATTEMPT of a turn — the wall-clock a single request may
+// spend in corrallm's queue plus its generation — so a wedged LLM/tool call
+// can't block a session's queue forever. It is NOT the patience for the whole
+// utterance: runTurnWithRetry (retry.go) re-runs the turn on a fresh attempt
+// ctx while the provider keeps failing, bounded by turnRetryBudget.
+//
+// 1h covers the observed longest legitimate request on this box (~78 minutes of
+// generation on local-Qwen3.8-27B, 2026-08-19) with headroom for queue time.
+const turnTimeout = 1 * time.Hour
 
 type convReq struct {
 	msg   string
@@ -85,10 +91,12 @@ func (c *Concierge) worker(sessionID string, q *sessQueue) {
 		}
 
 		// Background context, not any caller's: a coalesced turn serves several
-		// callers, so no single request's cancellation should abort it. Bounded so a
-		// stuck turn can't wedge the session.
-		ctx, cancel := context.WithTimeout(context.Background(), turnTimeout)
-		reply, err := c.runTurn(ctx, sessionID, mediumHint(medium)+strings.Join(msgs, "\n"))
+		// callers, so no single request's cancellation should abort it. The
+		// per-ATTEMPT bound is inside runTurnWithRetry (turnTimeout); this one
+		// just keeps a wedged session from holding its queue forever if the
+		// retry budget itself misbehaves.
+		ctx, cancel := context.WithTimeout(context.Background(), turnRetryBudget+turnTimeout)
+		reply, err := c.runTurnWithRetry(ctx, sessionID, mediumHint(medium)+strings.Join(msgs, "\n"))
 		cancel()
 
 		for _, r := range batch {
