@@ -28,8 +28,7 @@ could do anyway.
   consumers).
 
 ## Status
-✅ core done — see below. ◻ remaining: goal-plan tool (batch decompose into a
-named plan), PWA dep-graph view (deferred to reports.md).
+✅ done — see below. Remaining (icebox-grade): PWA dep-graph view → reports.md.
 
 ### ✅ Dependency axis on the release gate (`cue/cue.go`)
 - `Task.Deps []string` — ids that must be DONE before the task releases.
@@ -67,8 +66,16 @@ named plan), PWA dep-graph view (deferred to reports.md).
 - PWA "I need from you" section (`#openq`): tap-to-answer input (POST
   /api/questions/{id}/answer — no LLM) + GET /api/questions.
 
-### ◻ Remaining
-- **Goal-plan tool** — `plan_goal(goal)` that batch-decomposes into a named
-  task graph in one call (today the model composes plans from add_task + the
-  generator; a first-class plan shape with a goal id is the clean upgrade).
+### ✅ Goal-plan tool (`concierge/plan.go`)
+- `plan_goal(goal, tasks[])` — batch-decomposes a goal into a durable task
+  graph in one call. The model proposes ids/prompts/targets/deps; the
+  deterministic layer validates (deps must name batch ids; acyclic via
+  `cue.ValidateDeps`), relaxes bad edges (unknown deps dropped, cycles broken
+  edge-by-edge — work is never lost), and enqueues each via `EnqueueTask`
+  (dedupe key `plan|<id>|<prompt>`). Wired when Postgres is present. 7 tests
+  (batch, unknown-dep relax, cycle relax, malformed skip, empty, dedup,
+  no-store). The release loop dispatches the plan as capacity allows; the
+  result suggests `render_diagram(kind=tasks)` to show the graph.
+
+### Remaining (icebox-grade)
 - PWA dep-graph rendering → `plan/reports.md` (one renderer, two consumers).

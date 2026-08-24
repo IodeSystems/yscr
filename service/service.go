@@ -120,6 +120,10 @@ func New(cfg *config.Config) (*Server, error) {
 		s.conc.WithQuestions(&pgQuestions{pg})
 		s.conc.SetDecisionLog(s.logAnswers)
 	}
+	// Goal plans: plan_goal batch-enqueues a decomposed goal into the cue.
+	if pg != nil {
+		s.conc.WithPlanGoal(pg)
+	}
 	// Diagrams & reports: deterministic renderers over the validated state.
 	s.conc.WithReports(concierge.ReportState{
 		CueTasks: s.cueTaskGraph,

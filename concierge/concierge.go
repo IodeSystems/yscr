@@ -54,6 +54,11 @@ type Concierge struct {
 	runSpawner source.Source
 	runWait    func(ctx context.Context, ref source.SessionRef) (string, error)
 
+	// Goal plans (plan_goal): the durable cue store to batch-enqueue a
+	// decomposed goal into. Nil without Postgres → tool stays off.
+	planEnq cueEnqueuer
+	planOn  bool
+
 	// Diagrams & reports (render_diagram / write_report).
 	report ReportState
 }
@@ -135,6 +140,9 @@ func (c *Concierge) session(sessionID string) *agent.Session {
 	}
 	if c.report.CueTasks != nil || c.report.Fleet != nil {
 		tools = append(tools, reportToolDefs...)
+	}
+	if c.planOn {
+		tools = append(tools, planToolDef)
 	}
 	return &agent.Session{
 		SessionID:  sessionID,
@@ -220,6 +228,9 @@ func (c *Concierge) dispatch(ctx context.Context, tc llm.ToolCall) (string, erro
 
 	if isReportTool(tc.Function.Name) {
 		return c.reportDispatch(ctx, tc.Function.Name, args), nil
+	}
+	if tc.Function.Name == "plan_goal" {
+		return c.planDispatch(ctx, args), nil
 	}
 
 	switch tc.Function.Name {

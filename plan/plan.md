@@ -35,7 +35,7 @@ checks; the concierge only mediates (read-back → confirm → call `Act`).
 | file | scope | status |
 |---|---|---|
 | `plan/scratchpad.md` | user-facing tasks/todos/schedules + run & watch commands | ✅ core done (polish open) |
-| `plan/goal-plans.md` | goal → dependency graph, open-questions queue, work-around-ambiguity | ✅ core done |
+| `plan/goal-plans.md` | goal → dependency graph ✅, open-questions queue ✅, plan_goal ✅ | ✅ |
 | `plan/reports.md` | diagrams + detailed reports on request | ✅ core done |
 | `plan/decision-memory.md` | decision log, preference auto-resolve | ✅ core done |
 | `plan/audio.md` | medium-aware verbosity ✅, ambient narration ✅; streaming STT live drive | ◐ |
