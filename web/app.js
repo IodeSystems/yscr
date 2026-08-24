@@ -158,6 +158,16 @@ function taskCard(t, closedRow = false) {
   meta.className = "taskmeta";
   meta.textContent = [...when, t.Status === "inflight" ? "running" : "", dest].filter(Boolean).join(" · ");
   if (meta.textContent) card.append(meta);
+  if (!closedRow && t.Kind === "command" && t.Target && t.Target.SessionID) {
+    const wbtn = document.createElement("button");
+    wbtn.className = "taskdone taskwatch";
+    wbtn.textContent = "▶ watch";
+    wbtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openDetail({ Ref: { Source: t.Target.Source || "terminal", ID: t.Target.SessionID, Title: t.Prompt }, Status: "running" });
+    });
+    card.append(wbtn);
+  }
   if (!closedRow && t.Kind === "todo") {
     const done = document.createElement("button");
     done.className = "taskdone";

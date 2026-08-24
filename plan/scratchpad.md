@@ -48,8 +48,9 @@ carries in-context.
   facts that matter), raw tail kept underneath; short output or a summarizer
   failure reports the raw tail as-is. `service.runSummarize` implements it over
   the concierge's LLM runner (45s bound, best-effort).
-- ◻ **PWA "running commands" view** — open command tasks with a Watch shortcut
-  (the task list shows them; watching is one tap away in the detail sheet).
+- ✅ **PWA running-commands view** — open command tasks whose target session is
+  known get a "▶ watch" button that opens the detail sheet (where the live
+  tail + Narrate already live) for that pane.
 
 **Scratchpad COMPLETE** — todos, schedules, run & watch, and completion
 summaries all land.
