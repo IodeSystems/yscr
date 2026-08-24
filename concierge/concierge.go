@@ -118,21 +118,6 @@ func (c *Concierge) ConverseOn(ctx context.Context, sessionID, userMessage, medi
 	}
 }
 
-// runTurn injects one (possibly merged) user message and runs a single agent
-// turn. Only ever called by a session's worker goroutine — never concurrently
-// for the same session.
-func (c *Concierge) runTurn(ctx context.Context, sessionID, userMessage string) (string, error) {
-	sess := c.session(sessionID)
-	if err := sess.Inject(ctx, agent.Entry{Kind: agent.KindUser, Content: userMessage}); err != nil {
-		return "", err
-	}
-	res, err := sess.Turn(ctx)
-	if err != nil {
-		return "", err
-	}
-	return res.Reply, nil
-}
-
 func (c *Concierge) session(sessionID string) *agent.Session {
 	tools := conciergeTools
 	if c.taskToolsOn {
