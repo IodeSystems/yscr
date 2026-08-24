@@ -14,6 +14,13 @@
 ## Status
 ✅ done — all three requirements landed.
 
+> **Runbook (how yscr is actually run):** `bin/dev --detach` — builds to
+> ~/.local/bin/yscr, runs with the personal local config (~/.yscr/config.local.json,
+> corrallm on this box), binds 0.0.0.0:8600 (LAN-reachable → hz proxy →
+> https://ysr.iodesystems.com). `bin/dev --stop` stops it. The systemd user unit
+> (below) is the supervision alternative but binds 127.0.0.1 only, so the hz
+> proxy 503s while it runs — prefer bin/dev for the dev box.
+
 ### ✅ Durable session registries
 - **claude adapter**: `Discover` reads `~/.claude/sessions/*.json` on every List
   call, so adoption self-heals after a reboot with no extra wiring. Verified
